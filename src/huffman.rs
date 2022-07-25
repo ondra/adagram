@@ -5,7 +5,8 @@ use std::vec::Vec;
 
 #[derive(Debug)]
 pub struct HuffmanTree {
-    pub nodes: Vec<Node>    
+    pub nodes: Vec<Node>,
+    pub len: usize,
 }
 
 #[derive(Debug)]
@@ -19,6 +20,7 @@ pub struct Node {
 
 impl Ord for Node {
     fn cmp(&self, other: &Self) -> Ordering { self.freq.cmp(&other.freq) }
+    //fn cmp(&self, other: &Self) -> Ordering { other.freq.cmp(&self.freq) }
 }
 
 impl PartialOrd for Node {
@@ -34,9 +36,9 @@ impl HuffmanTree {
     pub fn new(freqs: &[u64]) -> HuffmanTree {
         //let mut nodes = Vec::<Node>::with_capacity(freqs.len());
         let mut id = 0;
-        let mut heap = BinaryHeap::<Node>::with_capacity(freqs.len());
+        let mut heap = BinaryHeap::<std::cmp::Reverse<Node>>::with_capacity(freqs.len());
         for freq in freqs {
-            heap.push(Node{parent: u32::MAX, freq: *freq, id: id, lhs: false});
+            heap.push(std::cmp::Reverse(Node{parent: u32::MAX, freq: *freq, id: id, lhs: false}));
             id += 1;
         }
 
@@ -46,14 +48,17 @@ impl HuffmanTree {
                 out.resize_with(id as usize+1,
                     || { Node{parent: u32::MAX, freq: u64::MAX, id: u32::MAX, lhs: false} })
             }
+            if out[id as usize].freq != u64::MAX {
+                println!("err {:?}", out[id as usize]); 
+            }
             out[id as usize] = val;
         };
         
         while heap.len() > 1 {
-            let mut e1 = heap.pop().unwrap();
-            let mut e2 = heap.pop().unwrap();
+            let mut e1 = heap.pop().unwrap().0;
+            let mut e2 = heap.pop().unwrap().0;
 
-            heap.push(Node{ parent: u32::MAX, freq: e1.freq + e2.freq, id: id, lhs: false });
+            heap.push(std::cmp::Reverse(Node{ parent: u32::MAX, freq: e1.freq + e2.freq, id: id, lhs: false }));
 
             e1.parent = id; e1.lhs = true;
             e2.parent = id; e2.lhs = false;
@@ -64,26 +69,33 @@ impl HuffmanTree {
             id += 1;
         }
 
-        let root = heap.pop().unwrap();
+        let root = heap.pop().unwrap().0;
         put(root.id, root);
         
-        HuffmanTree{nodes: out}
+        HuffmanTree{nodes: out, len: freqs.len() }
     }
 
-    // find the path through the Huffman tree
-    pub fn path(&self, id: u32) -> Vec<bool> {
-        let mut out = Vec::<bool>::new();
+    // get directions through the Huffman tree from node _id_ to the root node
+    pub fn softmax_path(&self, id: u32) -> (Vec<bool>, Vec<u32>) {
+        let mut path = Vec::<bool>::new();
+        let mut nodes = Vec::<u32>::new();
         let root_node_id = self.nodes.last().unwrap().id;
         
         let mut cur_id = id;
         while cur_id != root_node_id {
             let cur_node = &self.nodes[cur_id as usize];
-            out.push(cur_node.lhs);
+            path.push(cur_node.lhs);
+            nodes.push(cur_node.parent - self.len as u32); 
             cur_id = cur_node.parent;
         }
         
-        out.reverse();
-        out
+        path.reverse(); nodes.reverse();
+        (path, nodes)
     }
 
+    pub fn _convert(&self) {
+        for id in 0..self.len {
+            dbg!(id, self.softmax_path(id as u32));
+        }
+    }
 }
