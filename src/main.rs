@@ -12,9 +12,10 @@ use ndarray_rand::rand_distr::Distribution;
 
 use crate::adagram::VectorModel;
 use std::io::Write;
+use std::io::BufRead;
 use spfunc::gamma::digamma;
 
-type F = f32;
+type F = f64;
 
 // fn digamma(x: F) -> F { x.ln() - 0.5*x }
 // ^ bad, maybe use https://math.stackexchange.com/a/1446110
@@ -82,11 +83,11 @@ struct Args {
 
     /// minimal probability of a meaning to contribute into gradients
     #[clap(long,default_value_t=1e-10)]
-    sense_threshold: f32,
+    sense_threshold: f64,
 
     /// minimal probability of a meaning to save after training
     #[clap(long,default_value_t=1e-3)]
-    save_threshold: f32,
+    save_threshold: f64,
 
     /// minimal probability of a meaning to save after training
     #[clap(long,default_value_t=0.025)]
@@ -152,20 +153,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let outpath = args.outpath;
 
     let mut lexf = std::io::BufWriter::new(
-        std::fs::File::create(outpath.to_string() + ".lex")?);
+        std::fs::File::create(outpath.to_string() + ".dict")?);
     for id in ixs.iter() {
-        write!(lexf, "{}\n", attr.lex.id2str(*id))?;
+        write!(lexf, "{} {}\n", attr.lex.id2str(*id), ofreqs[*id as usize])?;
     }
     lexf.flush()?;
     std::mem::drop(lexf);
 
+    /*
     let mut frqf = std::io::BufWriter::new(
         std::fs::File::create(outpath.to_string() + ".frq")?);
     for frq in vm.freqs.iter() {
         frqf.write_all(&frq.to_le_bytes())?;
     }
     frqf.flush()?;
-    std::mem::drop(frqf);
+    std::mem::drop(frqf); */
 
     // let batch = 64000;
     let dim = args.dim;
@@ -205,7 +207,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut in_grad = Array::<f32, Ix2>::zeros((prototypes, dim));
     let mut out_grad = Array::<f32, Ix1>::zeros(dim);
-    let mut z = Array::<f32, Ix1>::zeros(prototypes);
+    let mut z = Array::<f64, Ix1>::zeros(prototypes);
 
     let mut senses = 0;
     let mut max_senses = 0;
@@ -226,8 +228,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // random reduce ... TODO
             let window = args.window as isize;
-
-            // z.fill(0.);
 
             let n_senses = var_init_z(&mut vm, x, &mut z);
             senses += n_senses;
@@ -271,45 +271,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn expected_pi(vm: &VectorModel, w: u32, pi: &mut Array<f32, Ix1>) -> u32 {
-    let min_prob = 1e-3;
+fn expected_pi(vm: &VectorModel, w: u32, pi: &mut Array<f64, Ix1>) -> u32 {
+    let min_prob = 1e-3f64;
 
     let mut r = 1.;
     let mut senses = 0;
-    let mut ts = vm.counts.slice(s![w as usize, ..]).sum();
+    let mut ts = vm.counts.slice(s![w as usize, ..]).sum() as f64;
     
     for k in 0..vm.nmeanings()-1 {
-        ts = f32::max(ts - vm.counts[[w as usize, k]], 0.);
-        let a = 1. + vm.counts[[w as usize, k]] - (vm.d as f32);
-        let b = vm.alpha as f32 + (k as f32)*(vm.d as f32) + ts;
+        ts = f64::max(ts - vm.counts[[w as usize, k]] as f64, 0.);
+        let a = 1. + vm.counts[[w as usize, k]] as f64;
+        let b = vm.alpha + ts;
         pi[k] = mean_beta(a, b) * r;
         if pi[k] >= min_prob { senses += 1; }
-        r = f32::max(r - pi[k], 0.)
+        r = f64::max(r - pi[k], 0.)
     }
     pi[vm.nmeanings()-1] = r; 
     if r >= min_prob { senses += 1; }
     senses
 }
 
-fn var_init_z(vm: &mut VectorModel, w: u32, pi: &mut Array<f32, Ix1>) -> u32 {
-    let min_prob = 1e-3;
+fn var_init_z(vm: &mut VectorModel, w: u32, pi: &mut Array<f64, Ix1>) -> u32 {
+    let min_prob = 1e-3f64;
 
-    let mut r = 0.;
-    let mut x = 1.;
-    let mut senses = 0;
-    pi.assign(&vm.counts.slice(s![w as usize, ..]));
+    let mut r = 0f64;
+    let mut x = 1f64;
+    let mut senses = 0u32;
+    for i in 0..pi.len() {
+        pi[i] = vm.counts[[w as usize, i]] as f64;
+    }
     let mut ts = pi.sum();
-    for k in 0..pi.len() {
-        ts = f32::max(ts - pi[k], 0.);
-        let a = 1. + pi[k] - (vm.d as f32);
-        let b = vm.alpha as f32 + (k as f32)*(vm.d as f32) + ts;
+    for k in 0..pi.len()-1 {
+        ts = f64::max(ts - pi[k], 0.);
+        let a = 1. + pi[k];
+        let b = vm.alpha + ts;
         pi[k] = meanlog_beta(a, b) + r;
         r += meanlog_mirror(a, b);
 
         let pi_k = mean_beta(a, b) * x;
-        x = f32::max(x - pi_k, 0.);
+        x = f64::max(x - pi_k, 0.);
         if pi_k >= min_prob {
             senses += 1;
+        }
+        if pi[k].is_nan() || pi[k] > 10e15 || pi[k] < -10e15 {
+            panic!();
         }
     }
     let lp = pi.len();
@@ -318,14 +323,10 @@ fn var_init_z(vm: &mut VectorModel, w: u32, pi: &mut Array<f32, Ix1>) -> u32 {
     senses
 }
 
-fn sigmoid(x: f32) -> f32 { 1. / (1.+x.exp()) }
-fn logsigmoid(x: f32) -> f32 { -(1. + (-x).exp()).ln() }
+fn sigmoid   (x: f64) -> f64 { 1. / (1.+(-x).exp()) }
+fn logsigmoid(x: f64) -> f64 {     -(1.+(-x).exp()).ln() }
 
-fn var_update_z(vm: &mut VectorModel, x: u32, y: u32, z: &mut Array<f32, Ix1>) {
-    // _c_update_z
-    // vm.in, vm.out, m(vm), num_meanings, z, x, view(vm.path, :, y),
-    // view(vm.code, :, y), size(vm.path, 1)
-    
+fn var_update_z(vm: &mut VectorModel, x: u32, y: u32, z: &mut Array<f64, Ix1>) {
     let t = vm.counts.len_of(Axis(1));
     let x = x as usize;
     let y = y as usize;
@@ -339,13 +340,13 @@ fn var_update_z(vm: &mut VectorModel, x: u32, y: u32, z: &mut Array<f32, Ix1>) {
 
         for k in 0..t {
             let in_vec = vm.in_vecs.slice(s![x, k, ..]);
-            let f = in_vec.dot(&out_vec);
-            z[k] += logsigmoid(f * (1. - 2.*(code as f32)));
+            let f = in_vec.dot(&out_vec) as f64;
+            z[k] += logsigmoid(f * (1. - 2.*(code as f64)));
         }
     }
 }
 
-fn _skip_gram(vm: &mut VectorModel, in_vec: &Array<f32, Ix1>, x: u32) -> f32 {
+fn _skip_gram(vm: &mut VectorModel, in_vec: &Array<f32, Ix1>, x: u32) -> f64 {
     let x = x as usize;
     let mut pr = 0.;
     
@@ -355,21 +356,19 @@ fn _skip_gram(vm: &mut VectorModel, in_vec: &Array<f32, Ix1>, x: u32) -> f32 {
         if code == u8::MAX { break; }
 
         let out_vec = vm.out_vecs.slice(s![path, ..]);
-        let f = in_vec.dot(&out_vec);
+        let f = in_vec.dot(&out_vec) as f64;
 
-        pr += logsigmoid(f * (1. - 2.*(code as f32)));
+        pr += logsigmoid(f * (1. - 2.*(code as f64)));
     }
     pr
 }
-fn in_place_update(vm: &mut VectorModel, x: u32, y: u32, z: &Array<f32, Ix1>,
+fn in_place_update(vm: &mut VectorModel, x: u32, y: u32, z: &Array<f64, Ix1>,
                    lr: f64,
                    in_grad: &mut Array<f32, Ix2>, out_grad: &mut Array<f32, Ix1>,
-                   sense_threshold: f32) -> f32 {
-    // vm.in, vm.out, M, T, z, x, view(vm.path, :, v), view(vm.code, :, y),
-    // size(vm.code, 1), in_grad, out_grad, lr, sense_threshold
+                   sense_threshold: f64) -> f64 {
     let mut pr = 0.;
     let t = vm.counts.len_of(Axis(1));
-    let m = vm.in_vecs.len_of(Axis(1));
+    let m = vm.in_vecs.len_of(Axis(2));
     let x = x as usize;
     let y = y as usize;
 
@@ -380,23 +379,23 @@ fn in_place_update(vm: &mut VectorModel, x: u32, y: u32, z: &Array<f32, Ix1>,
         let path = vm.path[[y, n]] as usize;
         if code == u8::MAX { break; }
 
-        let mut out_vec = vm.out_vecs.slice_mut(s![path, ..]);
+        //let mut out_vec = vm.out_vecs.slice_mut(s![path, ..]);
+        let mut out_vec = vm.out_vecs.index_axis_mut(Axis(0), path);
 
         out_grad.fill(0.);
 
         for k in 0..t {
             if z[k] < sense_threshold { continue; }
             let in_vec = vm.in_vecs.slice(s![x, k, ..]);
-            dbg!("{:?}", in_vec);
-            let f = out_vec.dot(&in_vec);
+            let f = out_vec.dot(&in_vec) as f64;
             
-            pr += z[k] * logsigmoid(f * (1. - 2.*code as f32));
-            let d = 1. - code as f32 - sigmoid(f);
-            let g = z[k] * lr as f32 * d;
+            pr += z[k] * logsigmoid(f * (1. - 2.*code as f64));
+            let d = 1. - code as f64 - sigmoid(f);
+            let g = z[k] * lr * d;
 
             for i in 0..m {
-                in_grad[[k, i]] += g * out_vec[i];
-                out_grad[i] += g * in_vec[i];
+                in_grad[[k, i]] += (g * out_vec[i] as f64) as f32;
+                out_grad[i] += (g * in_vec[i] as f64) as f32;
             }
         }
 
@@ -406,16 +405,18 @@ fn in_place_update(vm: &mut VectorModel, x: u32, y: u32, z: &Array<f32, Ix1>,
     for k in 0..t {
         if z[k] < sense_threshold { continue; }
         let mut in_vec = vm.in_vecs.slice_mut(s![x, k, ..]);
+        //let mut in_vecc = vm.in_vecs.index_axis_mut(Axis(0), x);
+        //let mut in_vec = in_vecc.index_axis_mut(Axis(0), k);
         in_vec += &in_grad.slice(s![k, ..]);
     }
     pr
 }
 
 fn var_update_counts(vm: &mut VectorModel, x: u32,
-                     local_counts: &Array<f32, Ix1>, lr2: f64) {
+                     local_counts: &Array<f64, Ix1>, lr2: f64) {
     for k in 0..vm.counts.len_of(Axis(1)) {
-        vm.counts[[x as usize, k]] += lr2 as f32 *
-            (local_counts[[k as usize]] * vm.freqs[[x as usize]] as f32 - vm.counts[[x as usize, k]]);
+        vm.counts[[x as usize, k]] += (lr2 *
+            (local_counts[[k as usize]] * vm.freqs[[x as usize]] as f64 - vm.counts[[x as usize, k]] as f64)) as f32;
     }
 }
 
@@ -487,9 +488,9 @@ impl Iterator for DocIter<'_> {
     }
 }
 
-fn exp_normalize(x: &mut Array<f32, Ix1>) {
-    let max_x = x.fold(f32::MIN, |acc, e| if *e > acc { *e } else { acc });
-    let mut sum_x = 0f32;
+fn exp_normalize(x: &mut Array<f64, Ix1>) {
+    let max_x = x.fold(f64::MIN, |acc, e| if *e > acc { *e } else { acc });
+    let mut sum_x = 0f64;
     for e in x.iter_mut() {
         *e = (*e - max_x).exp();
         sum_x += *e;            
@@ -504,7 +505,34 @@ fn _cast_slice<T>(s: &[T]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(s.as_ptr() as *const u8, nbytes) }
 }
 
-fn save_model<F>(path: &str, vm: &VectorModel, min_prob: f32, id2word: F)
+fn load_dict(path: &str) -> Result<(Vec<u64>, Vec<String>), Box<dyn std::error::Error>> {
+    let br = std::io::BufReader::new(
+        std::fs::File::open(path.to_string())?
+    );
+
+    let vr: Result<Vec<(u64, usize, String)>, Box<dyn std::error::Error>>
+            = br.lines().enumerate().map(|(lineno, line)| {
+        let l = line.unwrap();
+        let parts: Vec<_> = l.split_whitespace().collect();
+        if parts.len() != 2 {
+            return Err("too many whitespace separators in dictionary".into());            
+        }
+        let word = parts[0];
+        let frq = parts[1].parse::<u64>()?;
+        Ok((frq, lineno, word.to_string()))
+    }).collect();
+    let mut v = vr?;
+
+    v.sort();
+    v.reverse();
+    //v.sort_by_key(|w| Reverse(*w));
+
+    let (freqs, ix2word): (Vec<u64>, Vec<String>) = v.into_iter().map(|(f, _, w)| (f, w)).unzip();
+    Ok((freqs, ix2word))
+}
+
+
+fn save_model<F>(path: &str, vm: &VectorModel, min_prob: f64, id2word: F)
         -> Result<(), Box<dyn std::error::Error>>
         where F: Fn(u32) -> String{
     let mut vecf = std::io::BufWriter::new(
@@ -512,26 +540,17 @@ fn save_model<F>(path: &str, vm: &VectorModel, min_prob: f32, id2word: F)
     
     let s = vm.in_vecs.shape();
     write!(vecf, "{} {} {}\n", s[0], s[2], s[1])?;
-    write!(vecf, "{} {}\n", vm.alpha, vm.d)?;
+    write!(vecf, "{} {}\n", vm.alpha, 0)?;
     write!(vecf, "{}\n", vm.code.len_of(Axis(1)))?;
 
-    for e in vm.freqs.iter() { write!(vecf, "{},", *e)?; };
-    write!(vecf, "\n")?;
-    for e in vm.code.iter() { write!(vecf, "{},", *e)?; };
-    write!(vecf, "\n")?;
-    for e in vm.path.iter() { write!(vecf, "{},", *e)?; };
-    write!(vecf, "\n")?;
-    for e in vm.counts.iter() { write!(vecf, "{},", *e)?; };
-    write!(vecf, "\n")?;
-    for e in vm.out_vecs.iter() { write!(vecf, "{},", *e)?; };
-    write!(vecf, "\n")?;
-    //vecf.write(cast_slice(vm.freqs.as_slice().unwrap()))?;
-    //vecf.write(cast_slice(vm.code.as_slice().unwrap()))?;
-    //vecf.write(cast_slice(vm.path.as_slice().unwrap()))?;
-    //vecf.write(cast_slice(vm.counts.as_slice().unwrap()))?;
-    //vecf.write(cast_slice(vm.out_vecs.as_slice().unwrap()))?;
+    for &e in vm.freqs.iter() { vecf.write(&e.to_le_bytes())?; };
+    for &e in vm.code.iter() { vecf.write(&e.to_le_bytes())?; };
+    for &e in vm.path.iter() { vecf.write(&e.to_le_bytes())?; };
+    for &e in vm.counts.iter() { vecf.write(&e.to_le_bytes())?; };
+    for &e in vm.out_vecs.iter() { vecf.write(&e.to_le_bytes())?; };
+    //write!(vecf, "\n")?;
 
-    let mut z = Array::<f32, Ix1>::zeros(s[1]);
+    let mut z = Array::<f64, Ix1>::zeros(s[1]);
 
     for v in 0..s[0] {
         let nsenses = expected_pi(&vm, v as u32, &mut z);
@@ -539,11 +558,10 @@ fn save_model<F>(path: &str, vm: &VectorModel, min_prob: f32, id2word: F)
         write!(vecf, "{}\n", nsenses)?;
         for k in 0..s[1] {
             if z[k] < min_prob { continue; }
-            write!(vecf, "{}\n", k)?;
+            write!(vecf, "{}\n", k+1)?;
             for e in vm.in_vecs.slice(s![v, k, ..]).iter() {
-                write!(vecf, "{},", *e)?;
+                vecf.write(&e.to_le_bytes())?;
             };
-            //write!(vecf, "{}", vm.in_vecs.slice(s![v, k, ..]))?;
             write!(vecf, "\n")?;
         }
     }
