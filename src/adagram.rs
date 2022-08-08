@@ -4,9 +4,10 @@ use ndarray_rand::rand::prelude::SmallRng;
 use ndarray_rand::rand_distr::Uniform;
 
 use std::io::Write;
+use std::io::Read;
 use std::io::BufRead;
 
-use crate::expected_pi;
+use crate::common::expected_pi;
 
 type V = f32;
 
@@ -34,7 +35,7 @@ impl VectorModel {
         }
     }
 
-    pub fn load_model(path: &str) -> Result<VectorModel, Box<dyn std::error::Error>> {
+    pub fn load_model(path: &str) -> Result<(VectorModel, Vec<String>), Box<dyn std::error::Error>> {
         let mut rf = std::io::BufReader::new(
             std::fs::File::open(path.to_string())?
         );
@@ -63,7 +64,7 @@ impl VectorModel {
         rf.read_line(&mut line)?;
         let codelen = line.parse::<usize>()?;
 
-        let vm = VectorModel{
+        let mut vm = VectorModel{
             freqs: Array::zeros(lexsize),
             code: Array::from_elem((lexsize, codelen), u8::MAX),
             path: Array::zeros((lexsize, codelen)),
@@ -72,38 +73,98 @@ impl VectorModel {
             alpha,
             counts: Array::zeros((lexsize, nsenses)),
         };
+        
+        let mut buf = [0u8; 8];
+        for i in 0..lexsize { 
+            rf.read_exact(&mut buf)?;
+            vm.freqs[i] = u64::from_le_bytes(buf);
+        }
 
-        Ok(vm)
+        let mut buf = [0u8; 1];
+        for i in 0..lexsize {
+            for j in 0..codelen {
+                rf.read_exact(&mut buf)?;
+                vm.code[[i, j]] = u8::from_le_bytes(buf);
+            }
+        }
+
+        let mut buf = [0u8; 4];
+        for i in 0..lexsize {
+            for j in 0..codelen {
+                rf.read_exact(&mut buf)?;
+                vm.path[[i, j]] = u32::from_le_bytes(buf);
+            }
+        }
+
+        let mut buf = [0u8; 4];
+        for i in 0..lexsize {
+            for j in 0..nsenses {
+                rf.read_exact(&mut buf)?;
+                vm.counts[[i, j]] = f32::from_le_bytes(buf);
+            }
+        }
+        
+        let mut buf = [0u8; 4];
+        for i in 0..lexsize {
+            for j in 0..dim {
+                rf.read_exact(&mut buf)?;
+                vm.out_vecs[[i, j]] = f32::from_le_bytes(buf);
+            }
+        }
+        
+        let mut id2str = Vec::<String>::new();
+
+        let mut line = String::new();
+        let mut buf = [0u8; 4];
+        for i in 0..lexsize {
+            rf.read_line(&mut line)?;
+            let word = line.trim().to_string();
+            id2str.push(word);
+
+            rf.read_line(&mut line)?;
+            let ns = line.trim().parse::<usize>()?;
+            for _j in 0..ns {
+                rf.read_line(&mut line)?;
+                let s = line.trim().parse::<usize>()?;
+                for k in 0..dim {
+                    rf.read_exact(&mut buf)?;
+                    vm.in_vecs[[i, s, k]] = f32::from_le_bytes(buf);
+                }
+                rf.read_line(&mut line)?;
+            }
+        }
+        
+        Ok((vm, id2str))
     }
 
-    pub fn save_model<F>(path: &str, vm: &VectorModel, min_prob: f64, id2word: F)
+    pub fn save_model<F>(&self, path: &str, min_prob: f64, id2word: F)
             -> Result<(), Box<dyn std::error::Error>>
             where F: Fn(u32) -> String{
         let mut vecf = std::io::BufWriter::new(
-            std::fs::File::create(path.to_string() + ".txt")?);
+            std::fs::File::create(path.to_string())?);
     
-        let s = vm.in_vecs.shape();
+        let s = self.in_vecs.shape();
         write!(vecf, "{} {} {}\n", s[0], s[2], s[1])?;
-        write!(vecf, "{} {}\n", vm.alpha, 0)?;
-        write!(vecf, "{}\n", vm.code.len_of(Axis(1)))?;
+        write!(vecf, "{} {}\n", self.alpha, 0)?;
+        write!(vecf, "{}\n", self.code.len_of(Axis(1)))?;
 
-        for &e in vm.freqs.iter() { vecf.write(&e.to_le_bytes())?; };
-        for &e in vm.code.iter() { vecf.write(&e.to_le_bytes())?; };
-        for &e in vm.path.iter() { vecf.write(&e.to_le_bytes())?; };
-        for &e in vm.counts.iter() { vecf.write(&e.to_le_bytes())?; };
-        for &e in vm.out_vecs.iter() { vecf.write(&e.to_le_bytes())?; };
+        for &e in self.freqs.iter() { vecf.write(&e.to_le_bytes())?; };
+        for &e in self.code.iter() { vecf.write(&e.to_le_bytes())?; };
+        for &e in self.path.iter() { vecf.write(&e.to_le_bytes())?; };
+        for &e in self.counts.iter() { vecf.write(&e.to_le_bytes())?; };
+        for &e in self.out_vecs.iter() { vecf.write(&e.to_le_bytes())?; };
         //write!(vecf, "\n")?;
 
         let mut z = Array::<f64, Ix1>::zeros(s[1]);
 
         for v in 0..s[0] {
-            let nsenses = expected_pi(&vm, v as u32, &mut z);
+            let nsenses = expected_pi(&self, v as u32, &mut z);
             write!(vecf, "{}\n", id2word(v as u32))?;
             write!(vecf, "{}\n", nsenses)?;
             for k in 0..s[1] {
                 if z[k] < min_prob { continue; }
                 write!(vecf, "{}\n", k+1)?;
-                for e in vm.in_vecs.slice(s![v, k, ..]).iter() {
+                for e in self.in_vecs.slice(s![v, k, ..]).iter() {
                     vecf.write(&e.to_le_bytes())?;
                 };
                 write!(vecf, "\n")?;
