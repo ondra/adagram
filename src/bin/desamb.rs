@@ -39,22 +39,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         };
 
-        let n_senses = var_init_z(&vm, x, &mut z);
+        let _n_senses = expected_pi(&vm, x, &mut z);
 
         for zk in z.iter_mut() {
             if *zk < 1e-3 { *zk = 0.; }
             *zk = zk.ln();  // ???
         }
 
-        let mut nvalid = 0;
-        let mut ninvalid = 0;
+        let mut _nvalid = 0;
+        let mut _ninvalid = 0;
         for ctxword in parts {
             let y = match str2id.get(ctxword) {
-                Some(n) => { nvalid += 1; *n },
-                None => { ninvalid += 1; continue; },
-            }
+                Some(n) => { _nvalid += 1; *n },
+                None => { _ninvalid += 1; continue; },
+            };
             var_update_z(&vm, x, y, &mut z);
         }
+
+        // if nvalid < 1;
 
         exp_normalize(&mut z);
 

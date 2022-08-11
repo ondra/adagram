@@ -90,11 +90,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let corp = corp::corp::Corpus::open(&args.corpname)?;
     let attr = corp.open_attribute(&args.attrname)?;
 
-    let lexsize = attr.lex.id_range();
+    let lexsize = attr.id_range();
     let mut ofreqs: Vec<u64> = vec![0u64; lexsize as usize];
     let mut ixs: Vec<u32> = Vec::new();
     for id in 0..lexsize {
-        let freq = attr.rev.count(id);
+        let freq = attr.frq(id);
         ofreqs[id as usize] = freq;
         if freq >= args.min_freq { ixs.push(id); }
     }
@@ -143,7 +143,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut lexf = std::io::BufWriter::new(
         std::fs::File::create(outpath.to_string() + ".dict")?);
     for id in ixs.iter() {
-        write!(lexf, "{} {}\n", attr.lex.id2str(*id), ofreqs[*id as usize])?;
+        write!(lexf, "{} {}\n", attr.id2str(*id), ofreqs[*id as usize])?;
     }
     lexf.flush()?;
     std::mem::drop(lexf);
@@ -200,9 +200,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut senses = 0;
     let mut max_senses = 0;
  
-    let txt = attr.text;
+    let id2word = |id| attr.id2str(ixs[id as usize]).to_string();
 
-    for rawdoc in dociterm(&*doc, &*txt, &oid_to_nid) {
+    for rawdoc in dociterm(&*doc, attr.as_ref(), &oid_to_nid) {
         let doc = preprocess(&rawdoc, &vm.freqs.as_slice().unwrap(),
                               total_frq, args.min_freq,
                               args.subsample as f64, &mut rng);
@@ -250,8 +250,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         doc_read += 1;
     }
 
-    let lexx = attr.lex;
-    let id2word = |id| lexx.id2str(ixs[id as usize]).to_string();
+    //let lexx = attr.lex;
 
     vm.save_model(&(outpath.to_string() + ".vm"), args.save_threshold, id2word)?;
     //println!("{:?}", ht.softmax_path(args.dim));
@@ -279,12 +278,12 @@ fn preprocess(doc: &[u32], freqs: &[u64], total_frq: u64,
 struct DocIter<'a> {
     docpos: usize,
     doc: &'a dyn corp::structure::Struct,
-    text: &'a dyn corp::text::Text,
+    attr: &'a (dyn corp::corp::Attr<'a> + 'a),
 }
 
 fn dociter<'a>(doc: &'a dyn corp::structure::Struct,
-              text: &'a dyn corp::text::Text) -> DocIter<'a> {
-    DocIter { docpos: 0, doc: doc, text: text }
+              attr: &'a (dyn corp::corp::Attr<'a> + 'a)) -> DocIter<'a> {
+    DocIter { docpos: 0, doc: doc, attr: attr }
 }
 
 struct DocIterM<'a> {
@@ -293,9 +292,9 @@ struct DocIterM<'a> {
 }
 
 fn dociterm<'a>(doc: &'a dyn corp::structure::Struct,
-              text: &'a dyn corp::text::Text,
+              attr: &'a dyn corp::corp::Attr<'a>,
               oid_to_nid: &'a[u32]) -> DocIterM<'a> {
-    DocIterM { di: dociter(doc, text), oid_to_nid: oid_to_nid }
+    DocIterM { di: dociter(doc, attr), oid_to_nid: oid_to_nid }
 }
 
 impl Iterator for DocIterM<'_> {
@@ -319,7 +318,7 @@ impl Iterator for DocIter<'_> {
             let beg = self.doc.beg_at(self.docpos as u64);
             let end = self.doc.end_at(self.docpos as u64);
             println!("{}: {}, {}", self.docpos, beg, end);
-            let it = self.text.at(beg);
+            let it = self.attr.iter_ids(beg);
             let vals = it.take((end - beg) as usize).collect();
             self.docpos += 1;
             Some(vals)

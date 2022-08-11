@@ -12,3 +12,4 @@ spfunc = "0.1.0"
 ndarray = "0.15.4"
 ndarray-rand = "0.14.0"
 clap = { version = "3.0.7", features = ["derive"] }
+binary-heap-plus = "0.4.1"

@@ -52,6 +52,7 @@ impl VectorModel {
         let dim = parts[1].parse::<usize>()?;
         let nsenses = parts[2].parse::<usize>()?;
 
+        line.clear();
         rf.read_line(&mut line)?;
         let parts: Vec<_> = line.split_whitespace().collect();
         if parts.len() != 2 {
@@ -61,8 +62,9 @@ impl VectorModel {
         let alpha = parts[0].parse::<f64>()?;
         let _d = parts[1].parse::<f64>()?;
 
+        line.clear();
         rf.read_line(&mut line)?;
-        let codelen = line.parse::<usize>()?;
+        let codelen = line.trim().parse::<usize>()?;
 
         let mut vm = VectorModel{
             freqs: Array::zeros(lexsize),
@@ -117,20 +119,25 @@ impl VectorModel {
         let mut line = String::new();
         let mut buf = [0u8; 4];
         for i in 0..lexsize {
+            line.clear();
             rf.read_line(&mut line)?;
             let word = line.trim().to_string();
             id2str.push(word);
 
+            line.clear();
             rf.read_line(&mut line)?;
             let ns = line.trim().parse::<usize>()?;
             for _j in 0..ns {
+                line.clear();
                 rf.read_line(&mut line)?;
-                let s = line.trim().parse::<usize>()?;
+                let s = line.trim().parse::<usize>()? - 1;
                 for k in 0..dim {
                     rf.read_exact(&mut buf)?;
                     vm.in_vecs[[i, s, k]] = f32::from_le_bytes(buf);
                 }
+                line.clear();
                 rf.read_line(&mut line)?;
+                assert!(line.trim() == "");
             }
         }
         
