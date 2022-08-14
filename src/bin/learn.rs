@@ -11,18 +11,10 @@ use adagram::adagram::VectorModel;
 use adagram::common::*;
 use adagram::huffman;
 
-use std::io::Write;
-
 /// Train an adaptive skip-gram model
 #[derive(Parser, Debug)]
 #[clap(author, version, about)]
 struct Args {
-    //// training text data
-    //train: String,
-
-    //// dictionary file with word frequencies
-    //dict: String,
-
     /// training corpus
     corpname: String,
 
@@ -88,7 +80,7 @@ struct Args {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let corp = corp::corp::Corpus::open(&args.corpname)?;
-    let attr = corp.open_attribute(&args.attrname)?;
+    let attr: Box<dyn corp::corp::Attr> = corp.open_attribute(&args.attrname)?;
 
     let lexsize = attr.id_range();
     let mut ofreqs: Vec<u64> = vec![0u64; lexsize as usize];
@@ -138,25 +130,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let outpath = args.outpath;
-
-    let mut lexf = std::io::BufWriter::new(
-        std::fs::File::create(outpath.to_string() + ".dict")?);
-    for id in ixs.iter() {
-        write!(lexf, "{} {}\n", attr.id2str(*id), ofreqs[*id as usize])?;
-    }
-    lexf.flush()?;
-    std::mem::drop(lexf);
-
-    /*
-    let mut frqf = std::io::BufWriter::new(
-        std::fs::File::create(outpath.to_string() + ".frq")?);
-    for frq in vm.freqs.iter() {
-        frqf.write_all(&frq.to_le_bytes())?;
-    }
-    frqf.flush()?;
-    std::mem::drop(frqf); */
-
     // let batch = 64000;
     let dim = args.dim;
     let prototypes = args.prototypes;
@@ -172,21 +145,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let doc = corp.open_struct("doc", false)?;
-    //let txt = attr.text;
 
-    //let mut di = dociterm(&*doc, &*txt, &oid_to_nid);
-    /* for _ in 0..10 {
-        if let Some(v) = di.next() {
-            println!("v {:?}", v);
-            let pp = preprocess(&v, &vm.freqs.as_slice().unwrap(),
-                                total_frq, 5, 1e-5, &mut rng);
-            println!("pp {:?}", pp);
-        } else {
-            break;
-        }
-    } */
-
-    let mut cntr = 0u64;
+    // let mut cntr = 0u64;
     let doc_cnt = doc.len();
     let mut doc_read = 0u64;
     let mut total_ll1 = 0.;
@@ -201,8 +161,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut max_senses = 0;
  
     let id2word = |id| attr.id2str(ixs[id as usize]).to_string();
+    
+    let starttime = std::time::Instant::now();
 
-    for rawdoc in dociterm(&*doc, attr.as_ref(), &oid_to_nid) {
+    let mut reporttime = std::time::Instant::now();
+    let mut words_read_last = 0;
+
+    for epoch in 0..args.epochs {
+    for rawdoc in dociterm(doc.as_ref(), attr.as_ref(), &oid_to_nid) {
         let doc = preprocess(&rawdoc, &vm.freqs.as_slice().unwrap(),
                               total_frq, args.min_freq,
                               args.subsample as f64, &mut rng);
@@ -240,19 +206,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             words_read += 1;
 
             var_update_counts(&mut vm, x, &z, lr2);
-
-            // timing TODO
             
+            let dur = reporttime.elapsed().as_secs();
+            if dur > 60 {
+                let rws = words_read - words_read_last;
+                words_read_last = words_read;
+                eprintln!("read {} words in epoch {}/{}, {} wps, {} spw",
+                          words_read, epoch+1, args.epochs, rws as f32 / dur as f32,
+                          senses as f32 / words_read as f32);
+                reporttime = std::time::Instant::now();
+            }
             // if words_read > total_words break
         }
 
-        //cntr += 1; if cntr > 5 { break; }
         doc_read += 1;
     }
 
-    //let lexx = attr.lex;
+    vm.save_model(&(args.outpath.to_string() + ".part"), args.save_threshold, id2word)?;
+    eprintln!("epoch {} of {} finished", epoch+1, args.epochs);         
+    }
 
-    vm.save_model(&(outpath.to_string() + ".vm"), args.save_threshold, id2word)?;
+    eprintln!("FINISHED: read {} words in {} epochs, {} wps",
+              words_read, args.epochs,
+              words_read as f32 / starttime.elapsed().as_secs() as f32);
+
+    vm.save_model(&(args.outpath.to_string()), args.save_threshold, id2word)?;
     //println!("{:?}", ht.softmax_path(args.dim));
     //dbg!(ht.convert());
     Ok(())
@@ -275,14 +253,57 @@ fn preprocess(doc: &[u32], freqs: &[u64], total_frq: u64,
     out
 }
 
+/*
+struct DocIterM<'a> {
+    docpos: usize,
+    doc: &'a (dyn corp::structure::Struct + 'a),
+    att: &'a (dyn corp::corp::Attr + 'a),
+    oid_to_nid: &'a[u32],
+}
+
+fn dociterm<'a>(
+              doc: &'a (dyn corp::structure::Struct + 'a),
+              att: &'a (dyn corp::corp::Attr + 'a),
+              oid_to_nid: &'a[u32],
+              ) -> DocIterM<'a>
+{
+    DocIterM { docpos: 0,
+        doc: doc, att: att,
+        oid_to_nid: oid_to_nid }
+}
+
+impl Iterator for DocIterM<'_> {
+    type Item = Vec<u32>;
+    fn next(&mut self) -> Option<Vec<u32>> {
+        if self.docpos < self.doc.len() {
+            let beg = self.doc.beg_at(self.docpos as u64);
+            let end = self.doc.end_at(self.docpos as u64);
+            println!("{}: {}, {}", self.docpos, beg, end);
+            let it = self.att.iter_ids(beg);
+            //let it = vec![1u32,2,3].into_iter();
+            let vals: Vec<u32> = it.take((end - beg) as usize).collect();
+            self.docpos += 1;
+            Some(vals.iter().filter_map(|oid| {
+                match self.oid_to_nid[*oid as usize] {
+                    u32::MAX => None,
+                    nid => Some(nid),
+                }
+            }).collect())
+        } else { None }
+    }
+}
+*/
+
+
 struct DocIter<'a> {
     docpos: usize,
     doc: &'a dyn corp::structure::Struct,
-    attr: &'a (dyn corp::corp::Attr<'a> + 'a),
+    attr: &'a (dyn corp::corp::Attr + 'a),
 }
 
 fn dociter<'a>(doc: &'a dyn corp::structure::Struct,
-              attr: &'a (dyn corp::corp::Attr<'a> + 'a)) -> DocIter<'a> {
+              attr: &'a (dyn corp::corp::Attr)) -> DocIter<'a>
+{
     DocIter { docpos: 0, doc: doc, attr: attr }
 }
 
@@ -292,8 +313,9 @@ struct DocIterM<'a> {
 }
 
 fn dociterm<'a>(doc: &'a dyn corp::structure::Struct,
-              attr: &'a dyn corp::corp::Attr<'a>,
-              oid_to_nid: &'a[u32]) -> DocIterM<'a> {
+              attr: &'a dyn corp::corp::Attr,
+              oid_to_nid: &'a[u32]) -> DocIterM<'a>
+{
     DocIterM { di: dociter(doc, attr), oid_to_nid: oid_to_nid }
 }
 
@@ -317,7 +339,7 @@ impl Iterator for DocIter<'_> {
         if self.docpos < self.doc.len() {
             let beg = self.doc.beg_at(self.docpos as u64);
             let end = self.doc.end_at(self.docpos as u64);
-            println!("{}: {}, {}", self.docpos, beg, end);
+            // println!("{}: {}, {}", self.docpos, beg, end);
             let it = self.attr.iter_ids(beg);
             let vals = it.take((end - beg) as usize).collect();
             self.docpos += 1;

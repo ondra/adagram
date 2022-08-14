@@ -146,9 +146,10 @@ impl VectorModel {
 
     pub fn save_model<F>(&self, path: &str, min_prob: f64, id2word: F)
             -> Result<(), Box<dyn std::error::Error>>
-            where F: Fn(u32) -> String{
+            where F: Fn(u32) -> String {
+        let tmppath = path.to_string() + ".tmp";
         let mut vecf = std::io::BufWriter::new(
-            std::fs::File::create(path.to_string())?);
+            std::fs::File::create(&tmppath)?);
     
         let s = self.in_vecs.shape();
         write!(vecf, "{} {} {}\n", s[0], s[2], s[1])?;
@@ -181,6 +182,8 @@ impl VectorModel {
         vecf.flush()?;
         std::mem::drop(vecf);
     
+        std::fs::rename(tmppath, path)?;
+
         Ok(())
     }
 
