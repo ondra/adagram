@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         };
 
-        let _n_senses = expected_pi(&vm, x, &mut z);
+        let _n_senses = expected_pi(&vm.counts, vm.alpha, x, &mut z);
 
         for zk in z.iter_mut() {
             if *zk < 1e-3 { *zk = 0.; }
@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some(n) => { _nvalid += 1; *n },
                 None => { _ninvalid += 1; continue; },
             };
-            var_update_z(&vm, x, y, &mut z);
+            var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path, x, y, &mut z);
         }
 
         // if nvalid < 1;

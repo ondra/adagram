@@ -9,6 +9,7 @@ use ndarray_rand::rand_distr::Distribution;
 
 use adagram::adagram::VectorModel;
 use adagram::common::*;
+use adagram::hogwild;
 use adagram::huffman;
 
 /// Train an adaptive skip-gram model
@@ -75,6 +76,10 @@ struct Args {
 
     /// path to save the output
     outpath: String,
+
+    /// number of training threads to run in parallel
+    #[clap(long,default_value_t=1)]
+    threads: u32,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -151,85 +156,127 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut doc_read = 0u64;
     let mut total_ll1 = 0.;
     let mut total_ll2 = 0.;
-    let mut words_read = 0;
-
-    let mut in_grad = Array::<f32, Ix2>::zeros((prototypes, dim));
-    let mut out_grad = Array::<f32, Ix1>::zeros(dim);
-    let mut z = Array::<f64, Ix1>::zeros(prototypes);
+    // let mut words_read = 0;
 
     let mut senses = 0;
     let mut max_senses = 0;
  
-    let id2word = |id| attr.id2str(ixs[id as usize]).to_string();
-    
     let starttime = std::time::Instant::now();
 
     let mut reporttime = std::time::Instant::now();
     let mut words_read_last = 0;
 
-    for epoch in 0..args.epochs {
-    for rawdoc in dociterm(doc.as_ref(), attr.as_ref(), &oid_to_nid) {
-        let doc = preprocess(&rawdoc, &vm.freqs.as_slice().unwrap(),
-                              total_frq, args.min_freq,
-                              args.subsample as f64, &mut rng);
-        for i in 0..doc.len() {
-            let x = doc[i];
+    let mut total_words = 0usize;
+    for (_id, cnt) in vm.freqs.iter().enumerate() {
+        total_words += *cnt as usize;
+    }
+    eprintln!("will visit {} positions per epoch", total_words);
+    total_words *= args.epochs as usize;
+    eprintln!("{} positions in total", total_words);
+    let _total_words = total_words;
 
-            let lr1 = f64::max(
-                args.start_lr * (1. - doc_read as f64 / (doc_cnt as f64+1.)),
-                args.start_lr * 1e-4);
-            let lr2 = lr1;
+    let words_read = std::sync::atomic::AtomicUsize::new(0);
 
-            // random reduce ... TODO
-            let window = args.window as isize;
+    let id2word = |id| attr.id2str(ixs[id as usize]).to_string();
+    
+    let mut in_vecs: hogwild::HogwildArray<f32, Ix3> = vm.in_vecs.into();
+    let mut out_vecs: hogwild::HogwildArray<f32, Ix2> = vm.out_vecs.into();
+    let mut counts: hogwild::HogwildArray<f32, Ix2> = vm.counts.into();
 
-            let n_senses = var_init_z(&vm, x, &mut z);
-            senses += n_senses;
-            max_senses = std::cmp::max(max_senses, n_senses);
-            for j in std::cmp::max(0, i as isize - window)..std::cmp::min(doc.len() as isize, i as isize + window) {
-                if i as isize == j { continue; }
-                let y = doc[j as usize];
-                var_update_z(&vm, x, y, &mut z);
-            }
+    let code = vm.code.view();
+    let path = vm.path.view();
+    let alpha = vm.alpha;
 
-            exp_normalize(&mut z);
+    let freqs = vm.freqs.view();
 
-            for j in std::cmp::max(0, i as isize - window)..std::cmp::min(doc.len() as isize, i as isize + window) {
-                if i as isize == j { continue; }
-                let y = doc[j as usize];
-                let ll = in_place_update(&mut vm, x, y, &z, lr1, &mut in_grad,
-                                         &mut out_grad, args.sense_threshold);
-                total_ll2 += 1.;
-                total_ll1 += (ll - total_ll1) / total_ll2;
-            }
+    let trainfunc = || {
+        let mut loc_rng = rng.clone();
 
-            words_read += 1;
+        let mut in_grad = Array::<f32, Ix2>::zeros((prototypes, dim));
+        let mut out_grad = Array::<f32, Ix1>::zeros(dim);
+        let mut z = Array::<f64, Ix1>::zeros(prototypes);
 
-            var_update_counts(&mut vm, x, &z, lr2);
+        for rawdoc in dociterm(doc.as_ref(), attr.as_ref(), &oid_to_nid, 0) {
+            let doc = preprocess(&rawdoc, &freqs.as_slice().unwrap(),
+                                  total_frq, args.min_freq,
+                                  args.subsample as f64, &mut loc_rng);
+            let mut in_mut = in_vecs.as_mut().view_mut();
+            let mut out_mut = out_vecs.as_mut().view_mut();
+            let mut counts_mut = counts.as_mut().view_mut();
+
+            for i in 0..doc.len() {
+                let local_words_read = words_read.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let dur = reporttime.elapsed().as_secs();
+                if dur > 60 {
+                    let rws = local_words_read - words_read_last;
+                    words_read_last = local_words_read;
+                    eprintln!("visited {} positions, {} wps, {} spw",
+                              local_words_read, rws as f32 / dur as f32,
+                              senses as f32 / local_words_read as f32);
+                    reporttime = std::time::Instant::now();
+                }
+                if local_words_read > total_words {
+                    eprintln!("training finished");
+                    break;
+                }
+
+                let x = doc[i];
+
+                let lr1 = f64::max(
+                    args.start_lr * (1. - local_words_read as f64 / (total_words as f64+1.)),
+                    args.start_lr * 1e-4);
+                let lr2 = lr1;
+
+                // random reduce ... TODO
+                let window = args.window as isize;
+
+                let n_senses = var_init_z(&counts_mut, alpha, x, &mut z);
+                senses += n_senses;
             
-            let dur = reporttime.elapsed().as_secs();
-            if dur > 60 {
-                let rws = words_read - words_read_last;
-                words_read_last = words_read;
-                eprintln!("read {} words in epoch {}/{}, {} wps, {} spw",
-                          words_read, epoch+1, args.epochs, rws as f32 / dur as f32,
-                          senses as f32 / words_read as f32);
-                reporttime = std::time::Instant::now();
+                max_senses = std::cmp::max(max_senses, n_senses);
+                for j in std::cmp::max(0, i as isize - window)..std::cmp::min(doc.len() as isize, i as isize + window) {
+                    if i as isize == j { continue; }
+                    let y = doc[j as usize];
+                    var_update_z(&in_mut, &out_mut, &code, &path, x, y, &mut z);
+                }
+
+                exp_normalize(&mut z);
+
+                for j in std::cmp::max(0, i as isize - window)..std::cmp::min(doc.len() as isize, i as isize + window) {
+                    if i as isize == j { continue; }
+                    let y = doc[j as usize];
+                    let ll = in_place_update(&mut in_mut, &mut out_mut, &counts_mut,
+                                             x, y, &z,
+                                             &code, &path,
+                                             lr1, &mut in_grad,
+                                             &mut out_grad, args.sense_threshold);
+                    //total_ll2 += 1.;
+                    //total_ll1 += (ll - total_ll1) / total_ll2;
+                }
+
+                var_update_counts(&freqs, &mut counts_mut, x, &z, lr2);
+
             }
-            // if words_read > total_words break
+
+            //doc_read += 1;
         }
+    };
 
-        doc_read += 1;
+    if args.threads > 1 {
+        // let handles = Vec::with_capacity(args.threads as usize);
+        trainfunc();
+    } else {
+        trainfunc();
     }
 
-    vm.save_model(&(args.outpath.to_string() + ".part"), args.save_threshold, id2word)?;
-    eprintln!("epoch {} of {} finished", epoch+1, args.epochs);         
-    }
-
+    let local_words_read = words_read.load(std::sync::atomic::Ordering::Relaxed);
     eprintln!("FINISHED: read {} words in {} epochs, {} wps",
-              words_read, args.epochs,
-              words_read as f32 / starttime.elapsed().as_secs() as f32);
+              local_words_read, args.epochs,
+              local_words_read as f32 / starttime.elapsed().as_secs() as f32);
 
+    vm.in_vecs = std::sync::Arc::try_unwrap(in_vecs.into_inner()).expect("fuck").into_inner();
+    vm.out_vecs = std::sync::Arc::try_unwrap(out_vecs.into_inner()).expect("fuck").into_inner();
+    vm.counts = std::sync::Arc::try_unwrap(counts.into_inner()).expect("fuck").into_inner();
     vm.save_model(&(args.outpath.to_string()), args.save_threshold, id2word)?;
     //println!("{:?}", ht.softmax_path(args.dim));
     //dbg!(ht.convert());
@@ -253,47 +300,6 @@ fn preprocess(doc: &[u32], freqs: &[u64], total_frq: u64,
     out
 }
 
-/*
-struct DocIterM<'a> {
-    docpos: usize,
-    doc: &'a (dyn corp::structure::Struct + 'a),
-    att: &'a (dyn corp::corp::Attr + 'a),
-    oid_to_nid: &'a[u32],
-}
-
-fn dociterm<'a>(
-              doc: &'a (dyn corp::structure::Struct + 'a),
-              att: &'a (dyn corp::corp::Attr + 'a),
-              oid_to_nid: &'a[u32],
-              ) -> DocIterM<'a>
-{
-    DocIterM { docpos: 0,
-        doc: doc, att: att,
-        oid_to_nid: oid_to_nid }
-}
-
-impl Iterator for DocIterM<'_> {
-    type Item = Vec<u32>;
-    fn next(&mut self) -> Option<Vec<u32>> {
-        if self.docpos < self.doc.len() {
-            let beg = self.doc.beg_at(self.docpos as u64);
-            let end = self.doc.end_at(self.docpos as u64);
-            println!("{}: {}, {}", self.docpos, beg, end);
-            let it = self.att.iter_ids(beg);
-            //let it = vec![1u32,2,3].into_iter();
-            let vals: Vec<u32> = it.take((end - beg) as usize).collect();
-            self.docpos += 1;
-            Some(vals.iter().filter_map(|oid| {
-                match self.oid_to_nid[*oid as usize] {
-                    u32::MAX => None,
-                    nid => Some(nid),
-                }
-            }).collect())
-        } else { None }
-    }
-}
-*/
-
 
 struct DocIter<'a> {
     docpos: usize,
@@ -302,9 +308,9 @@ struct DocIter<'a> {
 }
 
 fn dociter<'a>(doc: &'a dyn corp::structure::Struct,
-              attr: &'a (dyn corp::corp::Attr)) -> DocIter<'a>
+              attr: &'a (dyn corp::corp::Attr), from: usize) -> DocIter<'a>
 {
-    DocIter { docpos: 0, doc: doc, attr: attr }
+    DocIter { docpos: from, doc: doc, attr: attr }
 }
 
 struct DocIterM<'a> {
@@ -314,9 +320,9 @@ struct DocIterM<'a> {
 
 fn dociterm<'a>(doc: &'a dyn corp::structure::Struct,
               attr: &'a dyn corp::corp::Attr,
-              oid_to_nid: &'a[u32]) -> DocIterM<'a>
+              oid_to_nid: &'a[u32], from: usize) -> DocIterM<'a>
 {
-    DocIterM { di: dociter(doc, attr), oid_to_nid: oid_to_nid }
+    DocIterM { di: dociter(doc, attr, from), oid_to_nid: oid_to_nid }
 }
 
 impl Iterator for DocIterM<'_> {
@@ -333,7 +339,7 @@ impl Iterator for DocIterM<'_> {
     }
 }
 
-impl Iterator for DocIter<'_> {
+/* impl Iterator for DocIter<'_> {
     type Item = Vec<u32>;
     fn next(&mut self) -> Option<Vec<u32>> {
         if self.docpos < self.doc.len() {
@@ -345,5 +351,19 @@ impl Iterator for DocIter<'_> {
             self.docpos += 1;
             Some(vals)
         } else { None }
+    }
+} */
+
+impl Iterator for DocIter<'_> {
+    type Item = Vec<u32>;
+    fn next(&mut self) -> Option<Vec<u32>> {
+        if self.docpos >= self.doc.len() { self.docpos = 0; }
+        let beg = self.doc.beg_at(self.docpos as u64);
+        let end = self.doc.end_at(self.docpos as u64);
+        // println!("{}: {}, {}", self.docpos, beg, end);
+        let it = self.attr.iter_ids(beg);
+        let vals = it.take((end - beg) as usize).collect();
+        self.docpos += 1;
+        Some(vals)
     }
 }
