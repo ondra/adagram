@@ -158,13 +158,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut total_ll2 = 0.;
     // let mut words_read = 0;
 
-    let mut senses = 0;
-    let mut max_senses = 0;
+    // let mut senses = 0;
+    // let mut max_senses = 0;
  
     let starttime = std::time::Instant::now();
-
-    let mut reporttime = std::time::Instant::now();
-    let mut words_read_last = 0;
 
     let mut total_words = 0usize;
     for (_id, cnt) in vm.freqs.iter().enumerate() {
@@ -177,11 +174,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let words_read = std::sync::atomic::AtomicUsize::new(0);
 
-    let id2word = |id| attr.id2str(ixs[id as usize]).to_string();
-    
-    let mut in_vecs: hogwild::HogwildArray<f32, Ix3> = vm.in_vecs.into();
-    let mut out_vecs: hogwild::HogwildArray<f32, Ix2> = vm.out_vecs.into();
-    let mut counts: hogwild::HogwildArray<f32, Ix2> = vm.counts.into();
+    let mut in_vecs_m: hogwild::HogwildArray<f32, Ix3> = vm.in_vecs.into();
+    let mut out_vecs_m: hogwild::HogwildArray<f32, Ix2> = vm.out_vecs.into();
+    let mut counts_m: hogwild::HogwildArray<f32, Ix2> = vm.counts.into();
 
     let code = vm.code.view();
     let path = vm.path.view();
@@ -189,7 +184,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let freqs = vm.freqs.view();
 
-    let trainfunc = || {
+    let trainfunc = |
+            mut in_vecs: hogwild::HogwildArray<f32, Ix3>,
+            mut out_vecs: hogwild::HogwildArray<f32, Ix2>,
+            mut counts: hogwild::HogwildArray<f32, Ix2>,
+        | {
+        let mut words_read_last = 0;
+        let mut reporttime = std::time::Instant::now();
         let mut loc_rng = rng.clone();
 
         let mut in_grad = Array::<f32, Ix2>::zeros((prototypes, dim));
@@ -210,9 +211,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if dur > 60 {
                     let rws = local_words_read - words_read_last;
                     words_read_last = local_words_read;
-                    eprintln!("visited {} positions, {} wps, {} spw",
-                              local_words_read, rws as f32 / dur as f32,
-                              senses as f32 / local_words_read as f32);
+                    //eprintln!("visited {} positions, {} wps, {} spw",
+                    //          local_words_read, rws as f32 / dur as f32,
+                    //          senses as f32 / local_words_read as f32);
                     reporttime = std::time::Instant::now();
                 }
                 if local_words_read > total_words {
@@ -231,9 +232,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let window = args.window as isize;
 
                 let n_senses = var_init_z(&counts_mut, alpha, x, &mut z);
-                senses += n_senses;
+                // senses += n_senses;
             
-                max_senses = std::cmp::max(max_senses, n_senses);
+                // max_senses = std::cmp::max(max_senses, n_senses);
                 for j in std::cmp::max(0, i as isize - window)..std::cmp::min(doc.len() as isize, i as isize + window) {
                     if i as isize == j { continue; }
                     let y = doc[j as usize];
@@ -264,9 +265,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if args.threads > 1 {
         // let handles = Vec::with_capacity(args.threads as usize);
-        trainfunc();
+        trainfunc(in_vecs_m.clone(), out_vecs_m.clone(), counts_m.clone());
     } else {
-        trainfunc();
+        trainfunc(in_vecs_m.clone(), out_vecs_m.clone(), counts_m.clone());
     }
 
     let local_words_read = words_read.load(std::sync::atomic::Ordering::Relaxed);
@@ -274,9 +275,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
               local_words_read, args.epochs,
               local_words_read as f32 / starttime.elapsed().as_secs() as f32);
 
-    vm.in_vecs = std::sync::Arc::try_unwrap(in_vecs.into_inner()).expect("fuck").into_inner();
-    vm.out_vecs = std::sync::Arc::try_unwrap(out_vecs.into_inner()).expect("fuck").into_inner();
-    vm.counts = std::sync::Arc::try_unwrap(counts.into_inner()).expect("fuck").into_inner();
+    vm.in_vecs = std::sync::Arc::try_unwrap(in_vecs_m.into_inner()).expect("fuck").into_inner();
+    vm.out_vecs = std::sync::Arc::try_unwrap(out_vecs_m.into_inner()).expect("fuck").into_inner();
+    vm.counts = std::sync::Arc::try_unwrap(counts_m.into_inner()).expect("fuck").into_inner();
+    let id2word = |id| attr.id2str(ixs[id as usize]).to_string();
     vm.save_model(&(args.outpath.to_string()), args.save_threshold, id2word)?;
     //println!("{:?}", ht.softmax_path(args.dim));
     //dbg!(ht.convert());
