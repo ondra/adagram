@@ -51,8 +51,8 @@ struct Args {
     subsample: f32,
 
     /// number of epochs to train
-    #[clap(long,default_value_t=1)]
-    epochs: u32,
+    #[clap(long,default_value_t=1.0)]
+    epochs: f64,
 
     /// randomly reduce size of the context
     #[clap(long)]
@@ -79,7 +79,7 @@ struct Args {
 
     /// number of training threads to run in parallel
     #[clap(long,default_value_t=1)]
-    threads: u32,
+    threads: usize,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -102,7 +102,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let reduced_lexsize = ixs.len(); 
-    println!("pruned lexicon size is {}", reduced_lexsize);
+    eprintln!("pruned lexicon size is {}", reduced_lexsize);
 
     let mut freqs = vec![0u64; reduced_lexsize];
     let mut oid_to_nid = vec![u32::MAX; lexsize as usize];
@@ -111,7 +111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         freqs[nid] = ofreqs[*oid as usize];
     }
 
-    println!("building huffman tree");
+    eprintln!("building huffman tree");
     let ht = huffman::HuffmanTree::new(&freqs);
 
     let mut max_codelen = 0;
@@ -119,7 +119,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (a, _b) = ht.softmax_path(id as u32);
         if a.len() > max_codelen { max_codelen = a.len(); }
     }
-    println!("maximum code length is {}", max_codelen);
+    eprintln!("maximum code length is {}", max_codelen);
 
     let mut rng = SmallRng::seed_from_u64(666);
     let mut vm = VectorModel::new(args.dim, args.prototypes,
@@ -168,15 +168,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         total_words += *cnt as usize;
     }
     eprintln!("will visit {} positions per epoch", total_words);
-    total_words *= args.epochs as usize;
+    total_words = (total_words as f64 * args.epochs) as usize;
     eprintln!("{} positions in total", total_words);
     let _total_words = total_words;
 
     let words_read = std::sync::atomic::AtomicUsize::new(0);
 
-    let mut in_vecs_m: hogwild::HogwildArray<f32, Ix3> = vm.in_vecs.into();
-    let mut out_vecs_m: hogwild::HogwildArray<f32, Ix2> = vm.out_vecs.into();
-    let mut counts_m: hogwild::HogwildArray<f32, Ix2> = vm.counts.into();
+    let in_vecs_m: hogwild::HogwildArray<f32, Ix3> = vm.in_vecs.into();
+    let out_vecs_m: hogwild::HogwildArray<f32, Ix2> = vm.out_vecs.into();
+    let counts_m: hogwild::HogwildArray<f32, Ix2> = vm.counts.into();
 
     let code = vm.code.view();
     let path = vm.path.view();
@@ -188,6 +188,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             mut in_vecs: hogwild::HogwildArray<f32, Ix3>,
             mut out_vecs: hogwild::HogwildArray<f32, Ix2>,
             mut counts: hogwild::HogwildArray<f32, Ix2>,
+            thread_id: usize,
         | {
         let mut words_read_last = 0;
         let mut reporttime = std::time::Instant::now();
@@ -197,7 +198,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut out_grad = Array::<f32, Ix1>::zeros(dim);
         let mut z = Array::<f64, Ix1>::zeros(prototypes);
 
-        for rawdoc in dociterm(doc.as_ref(), attr.as_ref(), &oid_to_nid, 0) {
+        let partsize = doc_cnt / args.threads;
+        let startdoc = partsize * thread_id;
+
+        for rawdoc in dociterm(doc.as_ref(), attr.as_ref(), &oid_to_nid, startdoc) {
             let doc = preprocess(&rawdoc, &freqs.as_slice().unwrap(),
                                   total_frq, args.min_freq,
                                   args.subsample as f64, &mut loc_rng);
@@ -207,26 +211,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             for i in 0..doc.len() {
                 let local_words_read = words_read.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let dur = reporttime.elapsed().as_secs();
-                if dur > 60 {
-                    let rws = local_words_read - words_read_last;
-                    words_read_last = local_words_read;
-                    //eprintln!("visited {} positions, {} wps, {} spw",
-                    //          local_words_read, rws as f32 / dur as f32,
-                    //          senses as f32 / local_words_read as f32);
-                    reporttime = std::time::Instant::now();
-                }
-                if local_words_read > total_words {
-                    eprintln!("training finished");
-                    break;
-                }
-
-                let x = doc[i];
 
                 let lr1 = f64::max(
                     args.start_lr * (1. - local_words_read as f64 / (total_words as f64+1.)),
                     args.start_lr * 1e-4);
                 let lr2 = lr1;
+
+                if thread_id == 0 {
+                    let dur = reporttime.elapsed().as_secs_f64();
+                    if dur > 0.5 {
+                        let rws = local_words_read - words_read_last;
+                        words_read_last = local_words_read;
+                        let wps = rws as f64 / dur;
+                        let remaining_words = total_words - local_words_read;
+                        let remaining_secs = remaining_words / wps as usize;
+                        let remaining_hours = remaining_secs / 3600;
+                        let remaining_mins = (remaining_secs % 3600) / 60;
+                        eprint!("\rvisited {} positions out of {} ({:.2} %), {:.0} wps, {:02}h:{:02}m remaining, lr {:.5}", //, {} spw",
+                                  local_words_read, total_words, local_words_read as f64 / total_words as f64 * 100.0,
+                                  wps, remaining_hours, remaining_mins, lr1,
+                                  // senses as f32 / local_words_read as f32);
+                                  );
+                        reporttime = std::time::Instant::now();
+                    }
+                }
+
+                if local_words_read >= total_words {
+                    return;
+                }
+
+                let x = doc[i];
 
                 // random reduce ... TODO
                 let window = args.window as isize;
@@ -264,13 +278,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     if args.threads > 1 {
-        // let handles = Vec::with_capacity(args.threads as usize);
-        trainfunc(in_vecs_m.clone(), out_vecs_m.clone(), counts_m.clone());
+        std::thread::scope(|scope| {
+            let mut handles = vec![];
+            for thread_id in 0..args.threads {
+                let in_vecs_c = in_vecs_m.clone();
+                let out_vecs_c = out_vecs_m.clone();
+                let counts_c = counts_m.clone();
+                handles.push(
+                    scope.spawn(move ||
+                        // trainfunc(in_vecs_m.clone(), out_vecs_m.clone(), counts_m.clone(), thread_id)
+                        trainfunc(in_vecs_c, out_vecs_c, counts_c, thread_id)
+                    )
+                );
+            }
+
+            for handle in handles {
+                match handle.join() {
+                    Ok(()) => (),
+                    Err(e) => std::panic::panic_any(e),
+                }
+            }
+        })
     } else {
-        trainfunc(in_vecs_m.clone(), out_vecs_m.clone(), counts_m.clone());
+        trainfunc(in_vecs_m.clone(), out_vecs_m.clone(), counts_m.clone(), 0);
     }
 
+    eprintln!();
+
     let local_words_read = words_read.load(std::sync::atomic::Ordering::Relaxed);
+    // let local_words_read = local_words_read - args.threads;
     eprintln!("FINISHED: read {} words in {} epochs, {} wps",
               local_words_read, args.epochs,
               local_words_read as f32 / starttime.elapsed().as_secs() as f32);
