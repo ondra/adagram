@@ -117,27 +117,57 @@ impl VectorModel {
         let mut id2str = Vec::<String>::new();
 
         let mut line = String::new();
+        rf.read_line(&mut line)?;
         let mut buf = [0u8; 4];
         for i in 0..lexsize {
-            line.clear();
-            rf.read_line(&mut line)?;
+            //line.clear();
+            //rf.read_line(&mut line)?;
             let word = line.trim().to_string();
             id2str.push(word);
 
             line.clear();
-            rf.read_line(&mut line)?;
-            let ns = line.trim().parse::<usize>()?;
-            for _j in 0..ns {
-                line.clear();
-                rf.read_line(&mut line)?;
-                let s = line.trim().parse::<usize>()? - 1;
+            rf.read_line(&mut line).unwrap();
+            let _ns = line.trim().parse::<usize>()?;
+
+            line.clear();
+            rf.read_line(&mut line).expect("y");
+            let mut jj = 0;
+            while jj < nsenses {
+                //line.clear();
+                //rf.read_line(&mut line).expect("y");
+                let senseno = line.trim().parse::<usize>()? - 1;
                 for k in 0..dim {
                     rf.read_exact(&mut buf)?;
-                    vm.in_vecs[[i, s, k]] = f32::from_le_bytes(buf);
+                    vm.in_vecs[[i, senseno, k]] = f32::from_le_bytes(buf);
                 }
                 line.clear();
-                rf.read_line(&mut line)?;
+                rf.read_line(&mut line).expect("x");
                 assert!(line.trim() == "");
+
+
+                ///////////////// HACK HACK HACK ////////////////////////
+                //  the writer does not store the number of senses properly:
+                //  this tries to guess whether to read a new sense or a whole new record
+                rf.read_line(&mut line)?;
+                if line == "" { break; }
+                let s1 = line.trim();
+                match s1.parse::<usize>() {
+                    Ok(n) => /* it's a number */ {
+                        if (n-1) > senseno && (n-1) < nsenses {
+                            /* looks like a new sense */
+                            // continue;
+                        } else {
+                            /* it's a number, but the value is un expected value -> a new lexicon element */
+                            break;
+                        }
+                    },
+                    Err(_) => /* it's surely a new word */ break,
+                }
+                // let mut v2 = Vec::new();
+                // let l2 = s.read_until(b'\n', &mut v2);
+                /////////// END HACK /////////////////
+
+                jj += 1;
             }
         }
         

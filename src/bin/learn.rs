@@ -12,9 +12,11 @@ use adagram::common::*;
 use adagram::hogwild;
 use adagram::huffman;
 
+const VERSION: &str = git_version::git_version!(args=["--tags","--always"]);
+
 /// Train an adaptive skip-gram model
 #[derive(Parser, Debug)]
-#[clap(author, version, about)]
+#[clap(author, version=VERSION, about)]
 struct Args {
     /// training corpus
     corpname: String,
@@ -80,6 +82,10 @@ struct Args {
     /// number of training threads to run in parallel
     #[clap(long,default_value_t=1)]
     threads: usize,
+
+    /// document structure -- do not cross begs or ends
+    #[clap(long,default_value="doc")]
+    docstructure: String,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -149,7 +155,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         vm.counts[[w, 0]] = if init_count > 0 { init_count as f32 } else { vm.freqs[w] as f32 };
     }
 
-    let doc = corp.open_struct("doc", false)?;
+    let doc = corp.open_struct(&args.docstructure)?;
 
     // let mut cntr = 0u64;
     let doc_cnt = doc.len();
@@ -277,6 +283,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    eprintln!("starting workers");
+
     if args.threads > 1 {
         std::thread::scope(|scope| {
             let mut handles = vec![];
@@ -284,13 +292,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let in_vecs_c = in_vecs_m.clone();
                 let out_vecs_c = out_vecs_m.clone();
                 let counts_c = counts_m.clone();
+                let thread_id_c = thread_id.clone();
                 handles.push(
                     scope.spawn(move ||
                         // trainfunc(in_vecs_m.clone(), out_vecs_m.clone(), counts_m.clone(), thread_id)
-                        trainfunc(in_vecs_c, out_vecs_c, counts_c, thread_id)
+                        trainfunc(in_vecs_c, out_vecs_c, counts_c, thread_id_c)
                     )
                 );
             }
+
+            eprintln!("workers started");
 
             for handle in handles {
                 match handle.join() {
