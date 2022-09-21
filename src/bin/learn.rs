@@ -159,9 +159,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // let mut cntr = 0u64;
     let doc_cnt = doc.len();
-    let mut doc_read = 0u64;
-    let mut total_ll1 = 0.;
-    let mut total_ll2 = 0.;
+    // let mut doc_read = 0u64;
+    // let mut total_ll1 = 0.;
+    // let mut total_ll2 = 0.;
     // let mut words_read = 0;
 
     // let mut senses = 0;
@@ -251,7 +251,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // random reduce ... TODO
                 let window = args.window as isize;
 
-                let n_senses = var_init_z(&counts_mut, alpha, x, &mut z);
+                let _n_senses = var_init_z(&counts_mut, alpha, x, &mut z);
                 // senses += n_senses;
             
                 // max_senses = std::cmp::max(max_senses, n_senses);
@@ -266,7 +266,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 for j in std::cmp::max(0, i as isize - window)..std::cmp::min(doc.len() as isize, i as isize + window) {
                     if i as isize == j { continue; }
                     let y = doc[j as usize];
-                    let ll = in_place_update(&mut in_mut, &mut out_mut, &counts_mut,
+                    let _ll = in_place_update(&mut in_mut, &mut out_mut, &counts_mut,
                                              x, y, &z,
                                              &code, &path,
                                              lr1, &mut in_grad,
@@ -278,8 +278,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 var_update_counts(&freqs, &mut counts_mut, x, &z, lr2);
 
             }
-
-            //doc_read += 1;
         }
     };
 
