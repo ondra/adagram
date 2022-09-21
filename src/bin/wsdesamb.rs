@@ -2,10 +2,13 @@ use clap::Parser;
 
 use ndarray::Array;
 use ndarray::prelude::*;
+use ndarray_rand::rand::prelude::SmallRng;
+use ndarray_rand::rand::SeedableRng;
 
 use adagram::adagram::VectorModel;
 use adagram::common::*;
 use adagram::nn::nearest;
+use adagram::reservoir_sampling::SamplerExt;
 
 use corp::wsketch::WMap;
 use corp::wsketch::WSLex;
@@ -52,6 +55,10 @@ struct Args {
     /// ignore a maximal cluster for collocates below this probability
     #[clap(long,default_value_t=0.6)]
     clusterminprob: f64,
+
+    /// visit at most the specified amount of concordance lines randomly
+    #[clap(long)]
+    sampleconc: Option<u64>,
 }
 
 
@@ -71,7 +78,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (vm, id2str) = VectorModel::load_model(&args.model)?;
 
     eprintln!("inverting model lexicon");
-    let mut str2id = std::collections::HashMap::<&str, u32>::with_capacity(id2str.len());
+    let mut str2id = std::collections::HashMap::<&str, u32>
+        ::with_capacity(id2str.len());
     for (id, word) in id2str.iter().enumerate() {
         str2id.insert(&word, id as u32);
     }
@@ -96,6 +104,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ntokens = 2*args.window;
     let mut lctx = Vec::<u32>::with_capacity(ntokens as usize);
     let mut rctx = Vec::<u32>::with_capacity(ntokens as usize);
+
+    let mut rng = SmallRng::seed_from_u64(666);
 
     eprintln!("ready");
     for line in std::io::stdin().lines() {
@@ -126,7 +136,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let nsenses = vm.in_vecs.len_of(Axis(1));
 
         for i in 0..nsenses { 
-            let r = nearest(&vm, head_mid as usize, i, args.sense_neighbors, 5);
+            let r = nearest(&vm, head_mid as usize, i,
+                            args.sense_neighbors, 5);
             print!("# sense {} ({}):", i, vm.counts[[head_mid as usize, i]]);
             for (mid, senseno, sim) in r {
                 print!("\t{}##{}/{:.3}", id2str[mid as usize], senseno, sim);
@@ -144,8 +155,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 for zk in zst.iter_mut() { (*zk).clear(); }
-                for (pos, _coll) in collx.iter() {
-                    let _n_senses = expected_pi(&vm.counts, vm.alpha, head_mid, &mut z);
+                let it = collx.iter();
+
+                let itf = || -> Box<dyn Iterator<Item=(usize, Option<i32>)>> {
+                    if let Some(nsamples) = args.sampleconc {
+                        if nsamples < collx.cnt {
+                            rng = SmallRng::seed_from_u64(
+                                (collx.id as u64) << 10 + relx.id as u64);
+                            return Box::new(
+                                it.sample(nsamples as usize, &mut rng)
+                            )
+                        }
+                    }
+                    return Box::new(it);
+                };
+
+                for (pos, _coll) in itf() {
+                    let _n_senses = expected_pi(&vm.counts, vm.alpha,
+                                                head_mid, &mut z);
 
                     for zk in z.iter_mut() {
                         if *zk < 1e-3 { *zk = 0.; }
@@ -156,7 +183,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // let rtokens = std::cmp::min(ntokens, pos);
 
                     let start = pos - ntokens;
-                    let ctxit = attr.iter_ids(start as u64).take(2*ntokens as usize + 1); 
+                    let ctxit = attr.iter_ids(start as u64)
+                        .take(2*ntokens as usize + 1);
 
                     lctx.clear(); rctx.clear();
                     for (ctxpos, ctx_cid) in std::iter::zip(start.., ctxit) {
@@ -178,12 +206,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     };
 
-                    for ctx_mid in lctx.iter().rev().filter_map(fmap_ids).take(args.window) {
-                        var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path, head_mid, ctx_mid, &mut z);
+                    for ctx_mid in lctx.iter()
+                        .rev().filter_map(fmap_ids).take(args.window) {
+                        var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code,
+                                     &vm.path, head_mid, ctx_mid, &mut z);
                     }
 
-                    for ctx_mid in rctx.iter().filter_map(fmap_ids).take(args.window) {
-                        var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path, head_mid, ctx_mid, &mut z);
+                    for ctx_mid in rctx.iter()
+                        .filter_map(fmap_ids).take(args.window) {
+                        var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code,
+                                     &vm.path, head_mid, ctx_mid, &mut z);
                     }
 
                     exp_normalize(&mut z);
@@ -198,22 +230,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     //    .join(" "));
                 }
 
-                print!("{}\t{}\t{}\t{}\t{}", head, rels, colls, collx.cnt, collx.rnk);
+                print!("{}\t{}\t{}\t{}\t{}",
+                       head, rels, colls, collx.cnt, collx.rnk);
 
-                let maxpos: Option<usize> = zst.iter().enumerate().max_by(|(_, a), (_, b)| a.mean().total_cmp(&b.mean())).map(|(i, _)| i);
+                let maxpos: Option<usize> = zst.iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| a.mean().total_cmp(&b.mean()))
+                    .map(|(i, _)| i);
 
                 if let Some(mp) = maxpos {
-                    if zst[mp].mean() < args.clusterminprob || zst[mp].n() < args.clusterminfrq {
+                    if zst[mp].mean() < args.clusterminprob
+                            || zst[mp].n() < args.clusterminfrq {
                         print!("\t-");
                     } else {
                         print!("\t{}", mp);
                     }
                 }
 
-                print!("\t{}",
-                       zst.iter().enumerate().map(|(i, p): (usize, &RunningStats)| -> String { format!("{}:{:.2}/{:.2}", i, p.mean(), p.stddev())})
-                       .collect::<Vec<String>>()
-                       .join(" "));
+                print!("\t{}", zst.iter()
+                    .enumerate()
+                    .map(|(i, p): (usize, &RunningStats)| -> String {
+                        format!("{}:{:.2}/{:.2}", i, p.mean(), p.stddev())})
+                    .collect::<Vec<String>>()
+                    .join(" "));
                 println!();
             }
         }
