@@ -38,7 +38,7 @@ impl HuffmanTree {
         let mut id = 0;
         let mut heap = BinaryHeap::<std::cmp::Reverse<Node>>::with_capacity(freqs.len());
         for freq in freqs {
-            heap.push(std::cmp::Reverse(Node{parent: u32::MAX, freq: *freq, id: id, lhs: false}));
+            heap.push(std::cmp::Reverse(Node{parent: u32::MAX, freq: *freq, id, lhs: false}));
             id += 1;
         }
 
@@ -58,7 +58,7 @@ impl HuffmanTree {
             let mut e1 = heap.pop().unwrap().0;
             let mut e2 = heap.pop().unwrap().0;
 
-            heap.push(std::cmp::Reverse(Node{ parent: u32::MAX, freq: e1.freq + e2.freq, id: id, lhs: false }));
+            heap.push(std::cmp::Reverse(Node{ parent: u32::MAX, freq: e1.freq + e2.freq, id, lhs: false }));
 
             e1.parent = id; e1.lhs = true;
             e2.parent = id; e2.lhs = false;

@@ -199,7 +199,7 @@ pub fn exp_normalize(x: &mut Array<f64, Ix1>) {
         sum_x += *e;            
     }
     for e in x.iter_mut() {
-        *e = *e / sum_x;
+        *e /= sum_x;
     }
 }
 

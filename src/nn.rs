@@ -20,7 +20,7 @@ pub fn nearest(vm: &VectorModel, head_id: usize, senseno: usize, top_k: usize, m
     let qvec = qvec_r.mapv(|v| v / qnorm) ;
 
     let sf = |(_id1, _s1, sim1): &(u32, u32, f32), (_id2, _s2, sim2): &(u32, u32, f32)| {
-        sim2.partial_cmp(&sim1).unwrap_or_else(
+        sim2.partial_cmp(sim1).unwrap_or_else(
             || match (sim2.is_nan(), sim1.is_nan()) {
                 (true, true) => std::cmp::Ordering::Equal,
                 (false, true) => std::cmp::Ordering::Greater,

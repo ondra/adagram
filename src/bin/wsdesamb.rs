@@ -81,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut str2id = std::collections::HashMap::<&str, u32>
         ::with_capacity(id2str.len());
     for (id, word) in id2str.iter().enumerate() {
-        str2id.insert(&word, id as u32);
+        str2id.insert(word, id as u32);
     }
 
     eprintln!("mapping corpus and model lexicon");
@@ -161,13 +161,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(nsamples) = args.sampleconc {
                         if nsamples < collx.cnt {
                             rng = SmallRng::seed_from_u64(
-                                (collx.id as u64) << 10 + relx.id as u64);
+                                ((collx.id as u64) << 10) + (relx.id as u64));
                             return Box::new(
                                 it.sample(nsamples as usize, &mut rng)
                             )
                         }
                     }
-                    return Box::new(it);
+                    Box::new(it)
                 };
 
                 for (pos, _coll) in itf() {

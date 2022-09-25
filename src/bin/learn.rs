@@ -208,7 +208,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let startdoc = partsize * thread_id;
 
         for rawdoc in dociterm(doc.as_ref(), attr.as_ref(), &oid_to_nid, startdoc) {
-            let doc = preprocess(&rawdoc, &freqs.as_slice().unwrap(),
+            let doc = preprocess(&rawdoc, freqs.as_slice().unwrap(),
                                   total_frq, args.min_freq,
                                   args.subsample as f64, &mut loc_rng);
             let mut in_mut = in_vecs.as_mut().view_mut();
@@ -290,7 +290,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let in_vecs_c = in_vecs_m.clone();
                 let out_vecs_c = out_vecs_m.clone();
                 let counts_c = counts_m.clone();
-                let thread_id_c = thread_id.clone();
+                let thread_id_c = thread_id;
                 handles.push(
                     scope.spawn(move ||
                         // trainfunc(in_vecs_m.clone(), out_vecs_m.clone(), counts_m.clone(), thread_id)
@@ -357,7 +357,7 @@ struct DocIter<'a> {
 fn dociter<'a>(doc: &'a dyn corp::structure::Struct,
               attr: &'a (dyn corp::corp::Attr), from: usize) -> DocIter<'a>
 {
-    DocIter { docpos: from, doc: doc, attr: attr }
+    DocIter { docpos: from, doc, attr }
 }
 
 struct DocIterM<'a> {
@@ -369,7 +369,7 @@ fn dociterm<'a>(doc: &'a dyn corp::structure::Struct,
               attr: &'a dyn corp::corp::Attr,
               oid_to_nid: &'a[u32], from: usize) -> DocIterM<'a>
 {
-    DocIterM { di: dociter(doc, attr, from), oid_to_nid: oid_to_nid }
+    DocIterM { di: dociter(doc, attr, from), oid_to_nid }
 }
 
 impl Iterator for DocIterM<'_> {

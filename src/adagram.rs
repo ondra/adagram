@@ -30,14 +30,14 @@ impl VectorModel {
             path: Array::zeros((lexsize, codelen)),
             in_vecs: Array::random_using((lexsize, nsenses, dim), u, rng),
             out_vecs: Array::random_using((lexsize, dim), u, rng),
-            alpha: alpha,
+            alpha,
             counts: Array::zeros((lexsize, nsenses)),
         }
     }
 
     pub fn load_model(path: &str) -> Result<(VectorModel, Vec<String>), Box<dyn std::error::Error>> {
         let mut rf = std::io::BufReader::new(
-            std::fs::File::open(path.to_string())?
+            std::fs::File::open(path)?
         );
     
         let mut line = String::new();
@@ -149,7 +149,7 @@ impl VectorModel {
                 //  the writer does not store the number of senses properly:
                 //  this tries to guess whether to read a new sense or a whole new record
                 rf.read_line(&mut line)?;
-                if line == "" { break; }
+                if line.is_empty() { break; }
                 let s1 = line.trim();
                 match s1.parse::<usize>() {
                     Ok(n) => /* it's a number */ {
@@ -182,30 +182,29 @@ impl VectorModel {
             std::fs::File::create(&tmppath)?);
     
         let s = self.in_vecs.shape();
-        write!(vecf, "{} {} {}\n", s[0], s[2], s[1])?;
-        write!(vecf, "{} {}\n", self.alpha, 0)?;
-        write!(vecf, "{}\n", self.code.len_of(Axis(1)))?;
+        writeln!(vecf, "{} {} {}", s[0], s[2], s[1])?;
+        writeln!(vecf, "{} {}", self.alpha, 0)?;
+        writeln!(vecf, "{}", self.code.len_of(Axis(1)))?;
 
-        for &e in self.freqs.iter() { vecf.write(&e.to_le_bytes())?; };
-        for &e in self.code.iter() { vecf.write(&e.to_le_bytes())?; };
-        for &e in self.path.iter() { vecf.write(&e.to_le_bytes())?; };
-        for &e in self.counts.iter() { vecf.write(&e.to_le_bytes())?; };
-        for &e in self.out_vecs.iter() { vecf.write(&e.to_le_bytes())?; };
-        //write!(vecf, "\n")?;
+        for &e in self.freqs.iter() { vecf.write_all(&e.to_le_bytes())?; };
+        for &e in self.code.iter() { vecf.write_all(&e.to_le_bytes())?; };
+        for &e in self.path.iter() { vecf.write_all(&e.to_le_bytes())?; };
+        for &e in self.counts.iter() { vecf.write_all(&e.to_le_bytes())?; };
+        for &e in self.out_vecs.iter() { vecf.write_all(&e.to_le_bytes())?; };
 
         let mut z = Array::<f64, Ix1>::zeros(s[1]);
 
         for v in 0..s[0] {
             let nsenses = expected_pi(&self.counts, self.alpha, v as u32, &mut z);
-            write!(vecf, "{}\n", id2word(v as u32))?;
-            write!(vecf, "{}\n", nsenses)?;
+            writeln!(vecf, "{}", id2word(v as u32))?;
+            writeln!(vecf, "{}", nsenses)?;
             for k in 0..s[1] {
                 if z[k] < min_prob { continue; }
-                write!(vecf, "{}\n", k+1)?;
+                writeln!(vecf, "{}", k+1)?;
                 for e in self.in_vecs.slice(s![v, k, ..]).iter() {
-                    vecf.write(&e.to_le_bytes())?;
+                    vecf.write_all(&e.to_le_bytes())?;
                 };
-                write!(vecf, "\n")?;
+                writeln!(vecf)?;
             }
         }
 

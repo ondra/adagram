@@ -16,13 +16,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // build reverse lexicon mapping
     let mut str2id = std::collections::HashMap::<&str, u32>::with_capacity(id2str.len());
     for (id, word) in id2str.iter().enumerate() {
-        str2id.insert(&word, id as u32);
+        str2id.insert(word, id as u32);
     }
 
     let mut z = Array::<f64, Ix1>::zeros(vm.nmeanings());
     for line in std::io::stdin().lines() {
         let unwrapped = line?;
-        let mut parts = unwrapped.trim().split_whitespace();
+        let mut parts = unwrapped.split_whitespace();
         let head = match parts.next() {
             Some(x) => x,
             None => {

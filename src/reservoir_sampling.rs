@@ -12,7 +12,7 @@ pub struct ReservoirSampler<'a, E> {
 }
 
 impl <E> ReservoirSampler<'_, E> {
-    pub fn new<'a>(sample_size: usize, rng: &'a mut SmallRng) -> ReservoirSampler<'_, E> {
+    pub fn new(sample_size: usize, rng: &'_ mut SmallRng) -> ReservoirSampler<'_, E> {
         ReservoirSampler { elems: Vec::<E>::with_capacity(sample_size),
             rng, sample_size,
         }
@@ -68,7 +68,7 @@ pub struct Sampler<'a, I, R>
 impl<I, R: Rng> Sampler<'_, I, R>
     where I: ExactSizeIterator
 {
-    fn from_iter<'a>(it: I, k: usize, rng: &'a mut R) -> Sampler<'a, I, R> {
+    fn from_iter(it: I, k: usize, rng: &'_ mut R) -> Sampler<'_, I, R> {
         let n = it.len() as isize;
         Sampler { it, n, k, rng }
     }
@@ -110,7 +110,7 @@ impl<T, I: Iterator + Iterator<Item = T>, R> Iterator for Sampler<'_, I, R>
 {
     type Item = T;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.n < 0 || self.k <= 0 {
+        if self.n < 0 || self.k == 0 {
             None
         } else {
             let nskip = beta_binom1(
@@ -120,7 +120,7 @@ impl<T, I: Iterator + Iterator<Item = T>, R> Iterator for Sampler<'_, I, R>
                 self.it.next();
             }
             self.n = self.n - nskip as isize - 1;
-            self.k = self.k - 1;
+            self.k -= 1;
             self.it.next()
         }
     }
