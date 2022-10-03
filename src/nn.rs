@@ -10,6 +10,21 @@ fn norm_l2<S, D>(a: &ArrayBase<S, D>) -> f32
     a.iter().map(|x| *x**x).sum::<f32>().sqrt()
 }
 
+pub fn sim(vm: &VectorModel,
+            head_id1: usize, senseno1: usize,
+            head_id2: usize, senseno2: usize) -> f32
+{
+    let qvec_r1 = vm.in_vecs.slice(s![head_id1 as usize, senseno1, ..]);
+    let qnorm1 = norm_l2(&qvec_r1);
+    let qvec1 = qvec_r1.mapv(|v| v / qnorm1);
+
+    let qvec_r2 = vm.in_vecs.slice(s![head_id2 as usize, senseno2, ..]);
+    let qnorm2 = norm_l2(&qvec_r2);
+    let qvec2 = qvec_r2.mapv(|v| v / qnorm2);
+
+    qvec1.dot(&qvec2)
+}
+
 pub fn nearest(vm: &VectorModel, head_id: usize, senseno: usize, top_k: usize, min_count: usize) -> Vec<(u32, u32, f32)>
 {
     let ii = vm.in_vecs.len_of(Axis(0));
@@ -17,7 +32,7 @@ pub fn nearest(vm: &VectorModel, head_id: usize, senseno: usize, top_k: usize, m
 
     let qvec_r = vm.in_vecs.slice(s![head_id as usize, senseno, ..]);
     let qnorm = norm_l2(&qvec_r);
-    let qvec = qvec_r.mapv(|v| v / qnorm) ;
+    let qvec = qvec_r.mapv(|v| v / qnorm);
 
     let sf = |(_id1, _s1, sim1): &(u32, u32, f32), (_id2, _s2, sim2): &(u32, u32, f32)| {
         sim2.partial_cmp(sim1).unwrap_or_else(
