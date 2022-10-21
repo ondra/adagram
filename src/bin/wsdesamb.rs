@@ -69,6 +69,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let wsattrname = corp.get_conf("WSATTR").unwrap();
     let wsattr = corp.open_attribute(&wsattrname)?;
+    let defattrname = corp.get_conf("DEFAULTATTR").unwrap();
+    let defattr = corp.open_attribute(&defattrname)?;
 
     let wsbase = corp.get_conf("WSBASE").unwrap();
     let wmap = WMap::new(&wsbase)?;
@@ -232,6 +234,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 print!("{}\t{}\t{}\t{}\t{}",
                        head, rels, colls, collx.cnt, collx.rnk);
+
+                for i in 0..collx.lcm.len()-1 {
+                    print!("{}", defattr.id2str(collx.lcm[i] as u32));
+                    if i != collx.lcm.len()-2 {
+                        print!(" ");
+                    }
+                }
 
                 let maxpos: Option<usize> = zst.iter()
                     .enumerate()
