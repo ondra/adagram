@@ -245,6 +245,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         print!(" ");
                     }
                 }
+                print!("\t");
 
                 let maxpos: Option<usize> = zst.iter()
                     .enumerate()
