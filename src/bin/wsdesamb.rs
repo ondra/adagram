@@ -118,12 +118,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             head_cid
         } else {
             eprintln!("ERROR: '{}' not found in WSATTR lexicon", head);
+            println!("# ERROR: '{}' not found in WSATTR lexicon", head);
             continue;
         };
 
         let head_mid = corpid2id[head_cid as usize];
         if head_mid == u32::MAX {
             eprintln!("ERROR: unable to translate '{}' with WSATTR id {} to model id'", head, head_cid);
+            println!("# ERROR: unable to translate '{}' with WSATTR id {} to model id'", head, head_cid);
             continue;
         }
 
@@ -131,9 +133,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             headx
         } else {
             eprintln!("ERROR: model and lexicon know '{}', but it is not present in word sketch", head);
+            println!("# ERROR: model and lexicon know '{}', but it is not present in word sketch", head);
             continue;
         };
 
+        eprintln!("processing {}", head);
 
         let nsenses = vm.in_vecs.len_of(Axis(1));
 
