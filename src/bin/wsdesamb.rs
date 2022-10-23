@@ -241,10 +241,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 print!("{}\t{}\t{}\t{}\t{}",
                        head, rels, colls, collx.cnt, collx.rnk);
 
-                for i in 0..collx.lcm.len()-1 {
-                    print!("{}", defattr.id2str(collx.lcm[i] as u32));
-                    if i != collx.lcm.len()-2 {
-                        print!(" ");
+                if collx.lcm.len() >= 2 {
+                    for i in 0..collx.lcm.len()-1 {
+                        print!("{}", defattr.id2str(collx.lcm[i] as u32));
+                        if i != collx.lcm.len()-2 {
+                            print!(" ");
+                        }
                     }
                 }
                 print!("\t");
