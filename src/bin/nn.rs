@@ -10,7 +10,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // load model
     let modelpath = std::env::args().nth(1).ok_or("model path missing")?;
-    let (vm, id2str) = VectorModel::load_model(&modelpath)?;
+    let (mut vm, id2str) = VectorModel::load_model(&modelpath)?;
+
+    let norm = std::env::var("NORM").is_ok();
+    if norm {
+        vm.norm();
+    }
+    let vm = vm;  // drop mut
 
     // build reverse lexicon mapping
     let mut str2id = std::collections::HashMap::<&str, u32>::with_capacity(id2str.len());

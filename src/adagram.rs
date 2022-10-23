@@ -19,6 +19,8 @@ pub struct VectorModel {
     pub out_vecs: Array<V, Ix2>,
     pub alpha: f64,
     pub counts: Array<f32, Ix2>,
+
+    pub normed: bool,
 }
 
 impl VectorModel {
@@ -32,6 +34,7 @@ impl VectorModel {
             out_vecs: Array::random_using((lexsize, dim), u, rng),
             alpha,
             counts: Array::zeros((lexsize, nsenses)),
+            normed: false,
         }
     }
 
@@ -74,6 +77,7 @@ impl VectorModel {
             out_vecs: Array::zeros((lexsize, dim)),
             alpha,
             counts: Array::zeros((lexsize, nsenses)),
+            normed: false,
         };
         
         let mut buf = [0u8; 8];
