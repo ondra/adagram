@@ -188,13 +188,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // let ltokens = std::cmp::min(ntokens as usize, pos as usize);
                     // let rtokens = std::cmp::min(ntokens, pos);
 
-                    let start = pos - ntokens;
-                    let ctxit = attr.iter_ids(start as u64)
-                        .take(2*ntokens as usize + 1);
+                    let start = if pos >= ntokens { pos - ntokens } else { 0 };
+                    let ctxit = attr.iter_ids(start as u64);
 
                     lctx.clear(); rctx.clear();
                     for (ctxpos, ctx_cid) in std::iter::zip(start.., ctxit) {
                         if ctxpos == pos { continue; }
+                        if ctxpos > pos + ntokens {
+                            break;
+                        }
                         if ctxpos < pos {
                             lctx.push(ctx_cid);
                         } else {
