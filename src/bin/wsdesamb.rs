@@ -238,7 +238,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     //    .join(" "));
                 }
 
-                print!("{}\t{}\t{}\t{}\t{}",
+                print!("{}\t{}\t{}\t{}\t{}\t",
                        head, rels, colls, collx.cnt, collx.rnk);
 
                 if collx.lcm.len() >= 2 {
@@ -249,7 +249,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                print!("\t");
 
                 let maxpos: Option<usize> = zst.iter()
                     .enumerate()
