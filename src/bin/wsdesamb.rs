@@ -326,30 +326,3 @@ impl RunningStats {
         self.var().sqrt()
     }
 }
-
-pub struct RevAt<'a> {
-    attr: &'a dyn corp::corp::Attr,
-    pos: usize,
-    done: bool,
-}
-
-impl RevAt<'_> {
-    pub fn new(attr: &'_ dyn corp::corp::Attr, from: usize) -> RevAt<'_> {
-        RevAt {attr, pos: from, done: from == 0 }
-    }
-}
-
-impl Iterator for RevAt<'_> {
-    type Item = u32;
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.done { None } else {
-            self.pos -= 1;
-            let ret = self.attr.iter_ids(self.pos as u64).next().unwrap();
-            if self.pos == 0 { self.done = true }
-            Some(ret)
-        }
-    }
-}
-
-
-
