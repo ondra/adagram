@@ -262,7 +262,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     } else {
                         print!("\t{}", mp);
                     }
-                    print!("\t{:.2}/{:.2}", zst[mp].mean(), zst[mp].stddev());
+                    print!("\t{:.2}\t{:.2}", zst[mp].mean(), zst[mp].stddev());
+                } else {
+                    print!("\t-\t-\t-");
                 }
 
                 print!("\t{}", zst.iter()
