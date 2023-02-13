@@ -26,6 +26,10 @@ struct Args {
     // output probabilities for all senses
     #[clap(long,default_value_t=true)]
     print_probs: bool,
+
+    // skip the first line of input
+    #[clap(long,default_value_t=false)]
+    skip_header: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -49,8 +53,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut _all_invalid = 0;
 
     let mut z = Array::<f64, Ix1>::zeros(vm.nmeanings());
-    for maybeline in std::io::stdin().lines() {
-        let line = maybeline?;
+    let mut lines = std::io::stdin().lines().into_iter();
+    if args.skip_header {
+        if let Some(maybeline) = lines.next() {
+            let fullline = maybeline?;
+            let line = fullline.trim();
+            if args.mirror_input {
+                print!("{}\tcluster", line);
+                if args.print_probs {
+                    print!("\tcluster_probs");
+                }
+                println!();
+            }
+        }
+    }
+    for maybeline in lines {
+        let fullline = maybeline?;
+        let line = fullline.trim();
         let mut cols = line.split('\t');
         let head = match cols.next() {
             Some(x) => x,
