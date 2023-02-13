@@ -82,8 +82,8 @@ pub fn var_update_z<
     let x = x as usize;
     let y = y as usize;
     
-    let codes = codes.index_axis(Axis(0), y as usize);
-    let paths = paths.index_axis(Axis(0), y as usize);
+    let codes = codes.index_axis(Axis(0), y);
+    let paths = paths.index_axis(Axis(0), y);
     for (code, path) in std::iter::zip(codes, paths) {
         if *code == u8::MAX { break; }
 
@@ -187,7 +187,7 @@ pub fn var_update_counts<
 {
     for k in 0..counts.len_of(Axis(1)) {
         counts[[x as usize, k]] += (lr2 *
-            (local_counts[[k as usize]] * freqs[[x as usize]] as f64 - counts[[x as usize, k]] as f64)) as f32;
+            (local_counts[[k]] * freqs[[x as usize]] as f64 - counts[[x as usize, k]] as f64)) as f32;
     }
 }
 

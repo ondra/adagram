@@ -67,9 +67,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut neighbors = Vec::<Vec<(u32, u32, f32)>>::new();
 
         for i in 0..nsenses { 
-            let r = nearest(&vm, head_mid as usize, i,
-                            args.sense_neighbors, 5);
-            print!("# sense {} ({}):", i, vm.counts[[head_mid as usize, i]]);
+            let r = nearest(&vm, head_mid, i, args.sense_neighbors, 5);
+            print!("# sense {} ({}):", i, vm.counts[[head_mid, i]]);
             for (mid, senseno, sim) in &r {
                 if *mid as usize == head_mid && *senseno as usize == i { continue; }
                 print!("\t{}##{}/{:.3}", id2str[*mid as usize], senseno, sim);
@@ -146,7 +145,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     format!("#{} {}\n", ix, sf(*ix))
                 },
                 Node::Internal(l, r) =>
-                    format!("{:.3}d\n{}{}", node_diameter(&vm, head_mid, node),
+                    format!("{:.3}d\n{}{}", node_diameter(vm, head_mid, node),
                             &indent(&fmt_node(l, vm, head_mid, sf)),
                             &indent(&fmt_node(r, vm, head_mid, sf)),
                     )
@@ -154,7 +153,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         println!();
-        println!("{}", fmt_node(&root, &vm, head_mid, &sf));
+        println!("{}", fmt_node(root, &vm, head_mid, &sf));
     }
 
     Ok(())
@@ -169,7 +168,7 @@ fn node_sim(vm: &VectorModel, head_mid: usize, a: &Node, b: &Node) -> f32 {
     let mut cd = -2.;
     for u in a.ids() {
         for v in b.ids() {
-            let s = sim(&vm, head_mid, u, head_mid, v);
+            let s = sim(vm, head_mid, u, head_mid, v);
             if s > cd {
                 cd = s;
             }
@@ -183,7 +182,7 @@ fn node_diameter(vm: &VectorModel, head_mid: usize, n: &Node) -> f32 {
     let mut smin = 2.;
     for u in ids.iter() {
         for v in ids.iter() {
-            let s = sim(&vm, head_mid, *u, head_mid, *v);
+            let s = sim(vm, head_mid, *u, head_mid, *v);
             if s < smin {
                 smin = s;
             }
@@ -195,12 +194,12 @@ fn node_diameter(vm: &VectorModel, head_mid: usize, n: &Node) -> f32 {
 fn indent(s: &str) -> String {
     let mut out = String::new();
     for part in s.lines() {
-        if part != "" {
+        if !part.is_empty() {
             out.push_str("    ");
             out.push_str(part);
-            out.push_str("\n");
+            out.push('\n');
         } else {
-            out.push_str("\n");
+            out.push('\n');
         }
     }
     out

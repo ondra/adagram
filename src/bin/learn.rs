@@ -136,7 +136,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (path, nodes) = ht.softmax_path(id as u32);
         for i in 0..max_codelen {
             (vm.path[(id, i)], vm.code[(id, i)]) =
-                if i < nodes.len() { (nodes[i], if path[i] { 1 } else { 0 }) }
+                if i < nodes.len() { (nodes[i], u8::from(path[i])) }
                 else { ( u32::MAX, u8::MAX ) };
         }
     }

@@ -27,20 +27,22 @@ use ndarray::{Array, ArrayView, ArrayViewMut, Axis, Dimension, Ix, Ix2, RemoveAx
 pub struct HogwildArray<A, D>(Arc<UnsafeCell<Array<A, D>>>);
 
 impl<A, D> HogwildArray<A, D> {
-    #[inline]
-    pub fn as_mut(&mut self) -> &mut Array<A, D> {
-        let ptr = self.0.as_ref().get();
-        unsafe { &mut *ptr }
+    pub fn into_inner(self) -> Arc<UnsafeCell<Array<A, D>>> {
+        self.0
     }
+}
 
-    #[inline]
-    pub fn as_ref(&self) -> &Array<A, D> {
+impl<A, D> std::convert::AsRef<Array<A,D>> for HogwildArray<A, D> {
+    fn as_ref(&self) -> &Array<A, D> {
         let ptr = self.0.as_ref().get();
         unsafe { &*ptr }
     }
+}
 
-    pub fn into_inner(self) -> Arc<UnsafeCell<Array<A, D>>> {
-        self.0
+impl<A, D> std::convert::AsMut<Array<A,D>> for HogwildArray<A, D> {
+    fn as_mut(&mut self) -> &mut Array<A, D> {
+        let ptr = self.0.as_ref().get();
+        unsafe { &mut *ptr }
     }
 }
 

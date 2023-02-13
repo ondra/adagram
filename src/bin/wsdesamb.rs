@@ -104,8 +104,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let ntokens = 2*args.window;
-    let mut lctx = Vec::<u32>::with_capacity(ntokens as usize);
-    let mut rctx = Vec::<u32>::with_capacity(ntokens as usize);
+    let mut lctx = Vec::<u32>::with_capacity(ntokens);
+    let mut rctx = Vec::<u32>::with_capacity(ntokens);
 
     let mut rng = SmallRng::seed_from_u64(666);
 

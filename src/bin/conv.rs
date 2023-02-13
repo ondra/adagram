@@ -14,12 +14,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut bvecf = std::io::BufWriter::new(
         std::fs::File::create(&tgtmodelpath)?);
     let mut dicf = std::io::BufWriter::new(
-        std::fs::File::create(&(tgtmodelpath.to_string() + ".dic"))?);
+        std::fs::File::create(tgtmodelpath.to_string() + ".dic")?);
 
     eprintln!("loading {}", srcmodelpath);
     let (mut vm, id2str) = VectorModel::load_model(&srcmodelpath)?;
 
-    let norm = !std::env::var("UNNORMED").is_ok();
+    let norm = std::env::var("UNNORMED").is_err();
     if norm {
         eprintln!("normalizing vectors");
         vm.norm();
