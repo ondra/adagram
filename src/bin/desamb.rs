@@ -60,7 +60,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         exp_normalize(&mut z);
 
-        println!("{}", z.iter().map(|p: &f64|->String {format!("{:.4}", p)})
+        let maxpos: Option<usize> = z.iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.total_cmp(b))
+            .map(|(i, _)| i);
+
+        if let Some(mp) = maxpos {
+            print!("\t{}", mp);
+        } else {
+            print!("\t-");
+        }
+
+        println!("{}", z.iter()
+                 .enumerate()
+                 .map(|(i, p): (usize, &f64)|->String {format!("{}:{:.2}", i, p)})
                  .collect::<Vec<String>>()  // won't be necessary in future rust
                  .join(" "));
     }
