@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let wsbase = corp.get_conf("WSBASE").unwrap();
     let wmap = WMap::new(&wsbase)?;
-    let wslex = WSLex::open(&wsbase, wsattr.as_ref())?;
+    let wslex = WSLex::open(&wsbase, wsattr)?;
 
     eprintln!("loading model");
     let (vm, id2str) = VectorModel::load_model(&args.model)?;
