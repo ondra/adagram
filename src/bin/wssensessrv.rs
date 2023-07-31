@@ -26,14 +26,8 @@ const VERSION: &str = git_version::git_version!(args=["--tags","--always", "--di
 #[derive(Parser, Debug)]
 #[clap(author, version=VERSION, about)]
 struct Args {
-    /// word sketch corpus
-    corpname: String,
-
-    /// attribute to use, should be compatible with the attribute used to train the model
-    attrname: String,
-
-    /// adaptive skip-gram model
-    model: String,
+    /// file with pairs mapping language and model to load
+    modelfile: String,
 
     /// window size, token count on both sides of KWIC used for desambiguation
     #[clap(long,default_value_t=4)]
@@ -42,10 +36,6 @@ struct Args {
     /// minimal apriori sense probability
     #[clap(long,default_value_t=1e-3)]
     sense_threshold: f64,
-
-    /// amount of nearest neighbors for sense vectors to retrieve 
-    #[clap(long,default_value_t=6)]
-    sense_neighbors: usize,
 
     /// drop collocates below this rank
     #[clap(long,default_value_t=-100.)]
@@ -73,48 +63,68 @@ struct Args {
 }
 
 struct ServerState {
-    wslex: WSLex, 
-    corpid2id: Vec<u32>,
-    wmap: WMap,
-    vm: VectorModel,
-    sense_neighbors: usize,
-    id2str: Vec<String>,
     window: usize,
     wsminrnk: f32,
     wsminfrq: u64,
     sampleconc: Option<u64>,
-    attr: Box<dyn corp::corp::Attr>,
-    defattr: Box<dyn corp::corp::Attr>,
+    cmaps: std::sync::RwLock<HashMap<String, Vec<u32>>>,
+    models: std::sync::Arc<std::sync::RwLock<HashMap<String, (VectorModel, Vec<String>, HashMap<String, u32>)>>>,
+}
+
+fn load_model(modellang: &str, modelpath: &str, models: &std::sync::RwLock<HashMap<String, (VectorModel, Vec<String>, HashMap<String, u32>)>>)
+    -> Result<(), Box<dyn std::error::Error>>
+{
+    let has_model = {
+        let mr = models.read().unwrap();
+        mr.get(modellang).is_some()
+    };
+    if !has_model {
+        let mut mw = models.write().unwrap();
+        eprintln!("loading model");
+        let (vm, id2str) = VectorModel::load_model(modelpath)?;
+
+        eprintln!("inverting model lexicon");
+        let str2id = id2str.iter().enumerate().par_bridge()
+            .map(|(id, word)| { (word.to_string(), id as u32) })
+            .collect::<HashMap<String, u32>>();
+
+        mw.insert(modellang.to_string(), (vm, id2str, str2id));
+    }
+    Ok(())
 }
 
 use rayon::prelude::*;
-#[get("/<head>")]
-fn neighbors(head: String, state: &rocket::State<ServerState>) -> Result<rocket::response::content::RawJson<String>, String> {
-    let head_cid = if let Some(head_cid) = state.wslex.head2id(&head) {
-        head_cid
-    } else {
-        return Err(format!("ERROR: '{}' not found in WSATTR lexicon", head).into());
+#[get("/<head>?<neighbors>&<language>")]
+fn neighbors(head: String, neighbors: Option<usize>, language: String, state: &rocket::State<ServerState>)
+        -> Result<rocket::response::content::RawJson<String>, String> {
+    let mr = state.models.read().unwrap();
+    let (vm, id2str, str2id) = match mr.get(&language) {
+        Some(x) => x,
+        None => {
+            return Err(format!("model for {} not loaded", &language));
+        },
     };
-    let head_mid = state.corpid2id[head_cid as usize];
-    if head_mid == u32::MAX {
-        return Err(format!("ERROR: unable to translate '{}' with WSATTR id {} to model id'", head, head_cid).into());
-    }
-    let nsenses = state.vm.in_vecs.len_of(Axis(1));
+    let head_mid = match str2id.get(&head) {
+        Some(mid) => *mid,
+        None => {
+            return Err(format!("could not translate {}", &head));
+        },
+    };
 
-    // let mut out_senses: HashMap<usize, Vec<(String, u32, f32)>> = std::collections::HashMap::new();
+    let nsenses = vm.in_vecs.len_of(Axis(1));
 
     let out_senses: HashMap<usize, Vec<(String, u32, f32)>> =
             (0..nsenses).into_par_iter().map(|i| { 
-        let r = nearest(&state.vm, head_mid as usize, i,
-                        state.sense_neighbors, 5);
-        print!("# sense {} ({}):", i, state.vm.counts[[head_mid as usize, i]]);
+        let min_count = 5;
+        let r = nearest(&vm, head_mid as usize, i,
+                        neighbors.unwrap_or(5), min_count);
+        // print!("# sense {} ({}):", i, state.vm.counts[[head_mid as usize, i]]);
         let mut vec_neighbors = Vec::new();
         for (mid, senseno, sim) in r {
-            vec_neighbors.push((state.id2str[mid as usize].to_string(), senseno, sim));
-            print!("\t{}##{}/{:.3}", state.id2str[mid as usize], senseno, sim);
+            vec_neighbors.push((id2str[mid as usize].to_string(), senseno, sim));
+            // print!("\t{}##{}/{:.3}", state.id2str[mid as usize], senseno, sim);
         }
         (i, vec_neighbors)
-        // out_senses.insert(i, vec_neighbors);
     }).collect();
 
     match serde_json::to_string(&out_senses) {
@@ -123,21 +133,56 @@ fn neighbors(head: String, state: &rocket::State<ServerState>) -> Result<rocket:
     }
 }
 
-#[get("/<head>")]
-fn desamb(head: String, state: &rocket::State<ServerState>) -> Result<rocket::response::content::RawJson<String>, String> {
+#[get("/<head>?<corpname>&<language>")]
+fn desamb(head: String, language: String, corpname: String, state: &rocket::State<ServerState>) -> Result<rocket::response::content::RawJson<String>, String> {
     let ntokens = 2*state.window;
-    // let mut rng = SmallRng::seed_from_u64(666);
-        
-    let head_cid = if let Some(head_cid) = state.wslex.head2id(&head) {
+    let mr = state.models.read().unwrap();
+    let (vm, _id2str, str2id) = match mr.get(&language) {
+        Some(x) => x,
+        None => {
+            return Err(format!("model for {} not loaded", &language));
+        },
+    };
+
+    let corp = corp::corp::Corpus::open(&corpname).map_err(|e| format!("unable to open corpus: {}", e))?;
+    let wsattrname = corp.get_conf("WSATTR").unwrap();
+    let wsattr = corp.open_attribute(&wsattrname).map_err(|e| format!("unable to open WSATTR: {}", e))?;
+    let wsbase = corp.get_conf("WSBASE").unwrap();
+    let wmap = WMap::new(&wsbase).map_err(|e| format!("unable to open WMap: {}", e))?;
+
+    {
+        let has_c2m = {
+            state.cmaps.read().unwrap().get(&corpname).is_some()
+        };
+        if !has_c2m {
+            let mut mw = state.cmaps.write().unwrap();
+
+            eprintln!("mapping corpus and model lexicon");
+            let corpid2id = (0..wsattr.id_range()).into_par_iter().map(|corpid| {
+                let cval = wsattr.id2str(corpid);
+                *str2id.get(cval).unwrap_or(&u32::MAX)
+            }).collect::<Vec<u32>>();
+
+            mw.insert(corpname.clone(), corpid2id);
+        }
+    };
+
+    let wslex = WSLex::open(&wsbase, wsattr).map_err(|e| format!("unable to open WS lexicon: {}", e))?;
+    let wsattr = corp.open_attribute(&wsattrname).map_err(|e| format!("unable to open WSATTR: {}", e))?;
+
+    let mr = state.cmaps.read().unwrap();
+    let c2m = mr.get(&corpname).unwrap();
+
+    let head_cid = if let Some(head_cid) = wslex.head2id(&head) {
         head_cid
     } else {
         return Err(format!("ERROR: '{}' not found in WSATTR lexicon", head).into());
     };
-    let head_mid = state.corpid2id[head_cid as usize];
+    let head_mid = c2m[head_cid as usize];
     if head_mid == u32::MAX {
         return Err(format!("ERROR: unable to translate '{}' with WSATTR id {} to model id'", head, head_cid).into());
     }
-    let headx = if let Some(headx) = state.wmap.find_id(head_cid) {
+    let headx = if let Some(headx) = wmap.find_id(head_cid) {
         headx
     } else {
         return Err(format!("ERROR: model and lexicon know '{}', but it is not present in word sketch", head).into());
@@ -146,21 +191,19 @@ fn desamb(head: String, state: &rocket::State<ServerState>) -> Result<rocket::re
     let mut out_rel: HashMap<String, HashMap<String, (usize, f64, f64)>> = std::collections::HashMap::new();
 
     for relx in headx.iter() {
-        let rels = state.wslex.id2rel(relx.id);
+        let rels = wslex.id2rel(relx.id);
 
-        // let mut out_coll = std::collections::HashMap::new();
-        // let out_coll: std::collections::HashMap<String, (usize, f64, f64)> = relx.iter().filter_map(|collx| {
         let out_coll: std::collections::HashMap<String, (usize, f64, f64)> = relx.iter().par_bridge().filter_map(|collx| {
             let mut lctx = Vec::<u32>::with_capacity(ntokens);
             let mut rctx = Vec::<u32>::with_capacity(ntokens);
-            let colls = state.wslex.id2coll(collx.id);
+            let colls = wslex.id2coll(collx.id);
             if collx.cnt < state.wsminfrq || collx.rnk < state.wsminrnk {
                 return None;
             }
 
-            let mut z = Array::<f64, Ix1>::zeros(state.vm.nmeanings());
+            let mut z = Array::<f64, Ix1>::zeros(vm.nmeanings());
             let mut zst = vec![];
-            for _ in 0..state.vm.nmeanings() {
+            for _ in 0..vm.nmeanings() {
                 zst.push(RunningStats::new());
             }
             for zk in zst.iter_mut() { (*zk).clear(); }
@@ -179,7 +222,7 @@ fn desamb(head: String, state: &rocket::State<ServerState>) -> Result<rocket::re
             };
 
             for (pos, _coll) in itf() {
-                let _n_senses = expected_pi(&state.vm.counts, state.vm.alpha,
+                let _n_senses = expected_pi(&vm.counts, vm.alpha,
                                             head_mid, &mut z);
 
                 for zk in z.iter_mut() {
@@ -188,7 +231,7 @@ fn desamb(head: String, state: &rocket::State<ServerState>) -> Result<rocket::re
                 }
 
                 let start = if pos >= ntokens { pos - ntokens } else { 0 };
-                let ctxit = state.attr.iter_ids(start as u64);
+                let ctxit = wsattr.iter_ids(start as u64);
 
                 lctx.clear(); rctx.clear();
                 for (ctxpos, ctx_cid) in std::iter::zip(start.., ctxit) {
@@ -204,7 +247,7 @@ fn desamb(head: String, state: &rocket::State<ServerState>) -> Result<rocket::re
                 }
 
                 let fmap_ids = |corpid: &u32| {
-                    match state.corpid2id[*corpid as usize] {
+                    match c2m[*corpid as usize] {
                         u32::MAX => None,
                         id => Some(id),
                     }
@@ -212,14 +255,14 @@ fn desamb(head: String, state: &rocket::State<ServerState>) -> Result<rocket::re
 
                 for ctx_mid in lctx.iter()
                     .rev().filter_map(fmap_ids).take(state.window) {
-                    var_update_z(&state.vm.in_vecs, &state.vm.out_vecs, &state.vm.code,
-                                 &state.vm.path, head_mid, ctx_mid, &mut z);
+                    var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code,
+                                 &vm.path, head_mid, ctx_mid, &mut z);
                 }
 
                 for ctx_mid in rctx.iter()
                     .filter_map(fmap_ids).take(state.window) {
-                    var_update_z(&state.vm.in_vecs, &state.vm.out_vecs, &state.vm.code,
-                                 &state.vm.path, head_mid, ctx_mid, &mut z);
+                    var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code,
+                                 &vm.path, head_mid, ctx_mid, &mut z);
                 }
 
                 exp_normalize(&mut z);
@@ -275,52 +318,49 @@ fn desamb(head: String, state: &rocket::State<ServerState>) -> Result<rocket::re
 
     match serde_json::to_string(&out_rel) {
         Ok(s) => Ok(rocket::response::content::RawJson(s)),
-        Err(e) => Err(format!("failed to encode response as json: {}", e)),
+        Err(e) => Err(format!("failed to encode response as json: {}", e).into()),
     }
 }
 
 #[rocket::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    let corp = corp::corp::Corpus::open(&args.corpname)?;
-    let attr: Box<dyn corp::corp::Attr> = corp.open_attribute(&args.attrname)?;
-
-    let wsattrname = corp.get_conf("WSATTR").unwrap();
-    let wsattr = corp.open_attribute(&wsattrname)?;
-    let defattrname = corp.get_conf("DEFAULTATTR").unwrap();
-    let defattr = corp.open_attribute(&defattrname)?;
-
-    let wsbase = corp.get_conf("WSBASE").unwrap();
-    let wmap = WMap::new(&wsbase)?;
-    let wslex = WSLex::open(&wsbase, wsattr)?;
-
-    eprintln!("loading model");
-    let (vm, id2str) = VectorModel::load_model(&args.model)?;
-
-    eprintln!("inverting model lexicon");
-    let mut str2id = std::collections::HashMap::<&str, u32>
-        ::with_capacity(id2str.len());
-    for (id, word) in id2str.iter().enumerate() {
-        str2id.insert(word, id as u32);
-    }
-
-    eprintln!("mapping corpus and model lexicon");
-    let mut corpid2id = Vec::<u32>::with_capacity(attr.id_range() as usize);
-    for corpid in 0..attr.id_range() {
-        let cval = attr.id2str(corpid);
-        corpid2id.push(match str2id.get(cval) {
-            Some(mid) => *mid,
-            None => u32::MAX,
-        });
-    }
-    assert!(corpid2id.len() == attr.id_range() as usize);
 
     let mut config = rocket::Config::default();
     config.port = args.port;
 
+    let models = std::sync::Arc::new(std::sync::RwLock::new(HashMap::new()));
+    let modellist = std::fs::read_to_string(args.modelfile)?
+        .lines()
+        .filter_map(|line| {
+            let stripped = line.trim();
+            let parts = stripped.split('\t').collect::<Vec<_>>();
+            if parts.len() != 2 {
+                eprintln!("wrong number of elements while parsing modelfile: {}, should be 2", parts.len());
+                eprintln!("got '{}'", stripped);
+                return None;
+            }
+            Some((parts[0].to_string(), parts[1].to_string()))
+        })
+        .collect::<Vec<(String, String)>>();
+
+    {
+        let models = models.clone();
+        tokio::spawn(async move {
+            for (modellang, modelpath) in modellist {
+                match load_model(&modellang, &modelpath, &models) {
+                    Ok(_) => eprintln!("model {} for {} loaded", &modelpath, &modellang),
+                    Err(e) => eprintln!("loading model {} for {} failed: {}", &modelpath, &modellang, &e),
+                };
+            }
+        });
+    }
+
     rocket::custom(config)
-    .manage(ServerState{wslex, corpid2id, wmap, vm, sense_neighbors: args.sense_neighbors, id2str,
-        window:args.window, wsminfrq:args.wsminfrq, wsminrnk:args.wsminrnk, sampleconc: args.sampleconc, attr, defattr})
+        .manage(ServerState{
+            window:args.window, wsminfrq:args.wsminfrq, wsminrnk:args.wsminrnk, sampleconc: args.sampleconc, // defattr,
+            cmaps: std::sync::RwLock::new(HashMap::new()), models: models.clone(),
+    })
     .mount("/neighbors/", routes![neighbors])
     .mount("/ws/", routes![desamb])
     .launch().await?;
