@@ -26,7 +26,7 @@ const VERSION: &str = git_version::git_version!(args=["--tags","--always", "--di
 #[derive(Parser, Debug)]
 #[clap(author, version=VERSION, about)]
 struct Args {
-    /// file with pairs mapping language and model to load
+    /// tab-separated file containing pairs mapping language to model
     modelfile: String,
 
     /// window size, token count on both sides of KWIC used for desambiguation
@@ -54,11 +54,11 @@ struct Args {
     clusterminprob: f64,
 
     /// visit at most the specified amount of concordance lines randomly
-    #[clap(long)]
-    sampleconc: Option<u64>,
+    #[clap(long,default_value_t=0)]
+    sampleconc: u64,
 
     /// HTTP listening port
-    #[clap(long,default_value_t=7878)]
+    #[clap(long,default_value_t=9494)]
     port: u16,
 }
 
@@ -66,7 +66,7 @@ struct ServerState {
     window: usize,
     wsminrnk: f32,
     wsminfrq: u64,
-    sampleconc: Option<u64>,
+    sampleconc: u64,
     cmaps: std::sync::RwLock<HashMap<String, Vec<u32>>>,
     models: std::sync::Arc<std::sync::RwLock<HashMap<String, (VectorModel, Vec<String>, HashMap<String, u32>)>>>,
 }
@@ -133,9 +133,15 @@ fn neighbors(head: String, neighbors: Option<usize>, language: String, state: &r
     }
 }
 
-#[get("/<head>?<corpname>&<language>")]
-fn desamb(head: String, language: String, corpname: String, state: &rocket::State<ServerState>) -> Result<rocket::response::content::RawJson<String>, String> {
-    let ntokens = 2*state.window;
+#[get("/<head>?<corpname>&<language>&<window>&<wsminrnk>&<wsminfrq>&<sampleconc>")]
+fn wsdesamb(head: String, language: String, corpname: String, window: Option<usize>,
+            wsminrnk: Option<f32>, wsminfrq: Option<u64>, sampleconc: Option<u64>,
+            state: &rocket::State<ServerState>) -> Result<rocket::response::content::RawJson<String>, String> {
+    let wsminrnk = wsminrnk.unwrap_or(state.wsminrnk);
+    let wsminfrq = wsminfrq.unwrap_or(state.wsminfrq);
+    let window = window.unwrap_or(state.window);
+    let sampleconc = sampleconc.unwrap_or(state.sampleconc);
+    let ntokens = 2*window;
     let mr = state.models.read().unwrap();
     let (vm, _id2str, str2id) = match mr.get(&language) {
         Some(x) => x,
@@ -197,7 +203,7 @@ fn desamb(head: String, language: String, corpname: String, state: &rocket::Stat
             let mut lctx = Vec::<u32>::with_capacity(ntokens);
             let mut rctx = Vec::<u32>::with_capacity(ntokens);
             let colls = wslex.id2coll(collx.id);
-            if collx.cnt < state.wsminfrq || collx.rnk < state.wsminrnk {
+            if collx.cnt < wsminfrq || collx.rnk < wsminrnk {
                 return None;
             }
 
@@ -211,10 +217,10 @@ fn desamb(head: String, language: String, corpname: String, state: &rocket::Stat
             let mut rng = SmallRng::seed_from_u64(
                 ((collx.id as u64) << 10) + (relx.id as u64));
             let itf = || -> Box<dyn Iterator<Item=(usize, Option<i32>)>> {
-                if let Some(nsamples) = state.sampleconc {
-                    if nsamples < collx.cnt {
+                if sampleconc > 0 {
+                    if sampleconc < collx.cnt {
                         return Box::new(
-                            it.sample(nsamples as usize, &mut rng)
+                            it.sample(sampleconc as usize, &mut rng)
                         )
                     }
                 }
@@ -254,13 +260,13 @@ fn desamb(head: String, language: String, corpname: String, state: &rocket::Stat
                 };
 
                 for ctx_mid in lctx.iter()
-                    .rev().filter_map(fmap_ids).take(state.window) {
+                    .rev().filter_map(fmap_ids).take(window) {
                     var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code,
                                  &vm.path, head_mid, ctx_mid, &mut z);
                 }
 
                 for ctx_mid in rctx.iter()
-                    .filter_map(fmap_ids).take(state.window) {
+                    .filter_map(fmap_ids).take(window) {
                     var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code,
                                  &vm.path, head_mid, ctx_mid, &mut z);
                 }
@@ -283,10 +289,10 @@ fn desamb(head: String, language: String, corpname: String, state: &rocket::Stat
                 .map(|(i, _)| i);
 
             let oc = if let Some(mp) = maxpos {
-                print!("\t{:.2}/{:.2}", zst[mp].mean(), zst[mp].stddev());
+                // print!("\t{:.2}/{:.2}", zst[mp].mean(), zst[mp].stddev());
                 (mp, zst[mp].mean(), zst[mp].stddev())
             } else {
-                print!("\t{:.2}/{:.2}", -1., -1.);
+                // print!("\t{:.2}/{:.2}", -1., -1.);
                 (999, -1., -1.)
             };
             return Some((colls.to_string(), oc));
@@ -362,7 +368,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cmaps: std::sync::RwLock::new(HashMap::new()), models: models.clone(),
     })
     .mount("/neighbors/", routes![neighbors])
-    .mount("/ws/", routes![desamb])
+    .mount("/wsdesamb/", routes![wsdesamb])
     .launch().await?;
 
     Ok(())
