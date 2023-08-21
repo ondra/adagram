@@ -71,15 +71,14 @@ struct ServerState {
     models: std::sync::Arc<std::sync::RwLock<HashMap<String, (VectorModel, Vec<String>, HashMap<String, u32>)>>>,
 }
 
-fn load_model(modellang: &str, modelpath: &str, models: &std::sync::RwLock<HashMap<String, (VectorModel, Vec<String>, HashMap<String, u32>)>>)
-    -> Result<(), Box<dyn std::error::Error>>
-{
+fn load_model(modellang: &str, modelpath: &str,
+              models: &std::sync::RwLock<HashMap<String, (VectorModel, Vec<String>, HashMap<String, u32>)>>
+        ) -> Result<(), Box<dyn std::error::Error>> {
     let has_model = {
         let mr = models.read().unwrap();
         mr.get(modellang).is_some()
     };
     if !has_model {
-        let mut mw = models.write().unwrap();
         eprintln!("loading model");
         let (vm, id2str) = VectorModel::load_model(modelpath)?;
 
@@ -88,9 +87,33 @@ fn load_model(modellang: &str, modelpath: &str, models: &std::sync::RwLock<HashM
             .map(|(id, word)| { (word.to_string(), id as u32) })
             .collect::<HashMap<String, u32>>();
 
+        let mut mw = models.write().unwrap();
         mw.insert(modellang.to_string(), (vm, id2str, str2id));
     }
     Ok(())
+}
+
+fn unload_model(modellang: &str,
+                models: &std::sync::RwLock<HashMap<String, (VectorModel, Vec<String>, HashMap<String, u32>)>>
+        ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut mw = models.write().unwrap();
+    match mw.remove(modellang) {
+        Some(_model) => Ok(()),
+        None => Err(format!("model {} not loaded", modellang).into()),
+    }
+}
+
+#[delete("/<language>")]
+fn req_unload_model(language: String, state: &rocket::State<ServerState>)
+        -> Result<(), String> {
+    unload_model(&language, &state.models).map_err(|e| { format!("{}", e) })
+}
+
+#[post("/<language>?<path>")]
+fn req_load_model(language: String, path: Option<String>, state: &rocket::State<ServerState>)
+        -> Result<(), String> {
+    load_model(&language, &path.ok_or("parameter 'path' not present")?, &state.models)
+        .map_err(|e| { format!("{}", e) })
 }
 
 use rayon::prelude::*;
@@ -369,6 +392,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .mount("/neighbors/", routes![neighbors])
     .mount("/wsdesamb/", routes![wsdesamb])
+    .mount("/models/", routes![req_load_model, req_unload_model])
     .launch().await?;
 
     Ok(())
