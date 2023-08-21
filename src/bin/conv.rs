@@ -4,13 +4,17 @@ use adagram::common::expected_pi;
 use std::io::Write;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if std::env::args().count() != 2 {
-        return Err("usage: conv MODELPATH".into());
+    if std::env::args().count() != 3 {
+        return Err("usage: conv SRCMODELPATH TGTMODELPATH".into());
     }
 
     // load model
-    let srcmodelpath = std::env::args().nth(1).ok_or("model path missing")?;
-    let tgtmodelpath = srcmodelpath.to_string() + ".bvec32";
+    let srcmodelpath = std::env::args().nth(1).ok_or("source model path missing")?;
+    let tgtmodelpath = std::env::args().nth(2).ok_or("target model path missing")?;
+    if !tgtmodelpath.ends_with(".bvec32") {
+        eprintln!("target model path does not end with .bvec32");
+    }
+
     let mut bvecf = std::io::BufWriter::new(
         std::fs::File::create(&tgtmodelpath)?);
     let mut dicf = std::io::BufWriter::new(
