@@ -116,9 +116,19 @@ fn req_load_model(language: String, path: Option<String>, state: &rocket::State<
         .map_err(|e| { format!("{}", e) })
 }
 
+#[get("/")]
+fn req_list_models(state: &rocket::State<ServerState>)
+        -> Result<rocket::response::content::RawJson<String>, String> {
+    let mr = state.models.read().unwrap();
+    match serde_json::to_string(&mr.keys().collect::<Vec<_>>()) {
+        Ok(s) => Ok(rocket::response::content::RawJson(s)),
+        Err(e) => Err(format!("failed to encode response as json: {}", e)),
+    }
+}
+
 use rayon::prelude::*;
 #[get("/<head>?<neighbors>&<language>")]
-fn neighbors(head: String, neighbors: Option<usize>, language: String, state: &rocket::State<ServerState>)
+fn req_neighbors(head: String, neighbors: Option<usize>, language: String, state: &rocket::State<ServerState>)
         -> Result<rocket::response::content::RawJson<String>, String> {
     let mr = state.models.read().unwrap();
     let (vm, id2str, str2id) = match mr.get(&language) {
@@ -157,7 +167,7 @@ fn neighbors(head: String, neighbors: Option<usize>, language: String, state: &r
 }
 
 #[get("/<head>?<corpname>&<language>&<window>&<wsminrnk>&<wsminfrq>&<sampleconc>")]
-fn wsdesamb(head: String, language: String, corpname: String, window: Option<usize>,
+fn req_wsdesamb(head: String, language: String, corpname: String, window: Option<usize>,
             wsminrnk: Option<f32>, wsminfrq: Option<u64>, sampleconc: Option<u64>,
             state: &rocket::State<ServerState>) -> Result<rocket::response::content::RawJson<String>, String> {
     let wsminrnk = wsminrnk.unwrap_or(state.wsminrnk);
@@ -390,9 +400,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             window:args.window, wsminfrq:args.wsminfrq, wsminrnk:args.wsminrnk, sampleconc: args.sampleconc, // defattr,
             cmaps: std::sync::RwLock::new(HashMap::new()), models: models.clone(),
     })
-    .mount("/neighbors/", routes![neighbors])
-    .mount("/wsdesamb/", routes![wsdesamb])
-    .mount("/models/", routes![req_load_model, req_unload_model])
+    .mount("/neighbors/", routes![req_neighbors])
+    .mount("/wsdesamb/", routes![req_wsdesamb])
+    .mount("/models/", routes![req_load_model, req_unload_model, req_list_models])
     .launch().await?;
 
     Ok(())
