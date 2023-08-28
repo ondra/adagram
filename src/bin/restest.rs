@@ -14,7 +14,7 @@ fn main() {
     }
 
     for _j in 0..r {
-        for i in (0..m).into_iter().sample(5, &mut tr) {
+        for i in (0..m).sample(5, &mut tr) {
             v[i] += 1;
             // println!("{}", i);
         }

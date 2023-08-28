@@ -62,17 +62,19 @@ struct Args {
     port: u16,
 }
 
+type ModelMap = HashMap<String, (VectorModel, Vec<String>, HashMap<String, u32>)>;
+
 struct ServerState {
     window: usize,
     wsminrnk: f32,
     wsminfrq: u64,
     sampleconc: u64,
     cmaps: std::sync::RwLock<HashMap<String, Vec<u32>>>,
-    models: std::sync::Arc<std::sync::RwLock<HashMap<String, (VectorModel, Vec<String>, HashMap<String, u32>)>>>,
+    models: std::sync::Arc<std::sync::RwLock<ModelMap>>,
 }
 
 fn load_model(modellang: &str, modelpath: &str,
-              models: &std::sync::RwLock<HashMap<String, (VectorModel, Vec<String>, HashMap<String, u32>)>>
+              models: &std::sync::RwLock<ModelMap>,
         ) -> Result<(), Box<dyn std::error::Error>> {
     let has_model = {
         let mr = models.read().unwrap();
@@ -94,7 +96,7 @@ fn load_model(modellang: &str, modelpath: &str,
 }
 
 fn unload_model(modellang: &str,
-                models: &std::sync::RwLock<HashMap<String, (VectorModel, Vec<String>, HashMap<String, u32>)>>
+                models: &std::sync::RwLock<ModelMap>,
         ) -> Result<(), Box<dyn std::error::Error>> {
     let mut mw = models.write().unwrap();
     match mw.remove(modellang) {
@@ -149,7 +151,7 @@ fn req_neighbors(head: String, neighbors: Option<usize>, language: String, state
     let out_senses: HashMap<usize, Vec<(String, u32, f32)>> =
             (0..nsenses).into_par_iter().map(|i| { 
         let min_count = 5;
-        let r = nearest(&vm, head_mid as usize, i,
+        let r = nearest(vm, head_mid as usize, i,
                         neighbors.unwrap_or(5), min_count);
         // print!("# sense {} ({}):", i, state.vm.counts[[head_mid as usize, i]]);
         let mut vec_neighbors = Vec::new();
@@ -166,6 +168,7 @@ fn req_neighbors(head: String, neighbors: Option<usize>, language: String, state
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[get("/<head>?<corpname>&<language>&<window>&<wsminrnk>&<wsminfrq>&<sampleconc>")]
 fn req_wsdesamb(head: String, language: String, corpname: String, window: Option<usize>,
             wsminrnk: Option<f32>, wsminfrq: Option<u64>, sampleconc: Option<u64>,
@@ -215,16 +218,16 @@ fn req_wsdesamb(head: String, language: String, corpname: String, window: Option
     let head_cid = if let Some(head_cid) = wslex.head2id(&head) {
         head_cid
     } else {
-        return Err(format!("ERROR: '{}' not found in WSATTR lexicon", head).into());
+        return Err(format!("ERROR: '{}' not found in WSATTR lexicon", head));
     };
     let head_mid = c2m[head_cid as usize];
     if head_mid == u32::MAX {
-        return Err(format!("ERROR: unable to translate '{}' with WSATTR id {} to model id'", head, head_cid).into());
+        return Err(format!("ERROR: unable to translate '{}' with WSATTR id {} to model id'", head, head_cid));
     }
     let headx = if let Some(headx) = wmap.find_id(head_cid) {
         headx
     } else {
-        return Err(format!("ERROR: model and lexicon know '{}', but it is not present in word sketch", head).into());
+        return Err(format!("ERROR: model and lexicon know '{}', but it is not present in word sketch", head));
     };
 
     let mut out_rel: HashMap<String, HashMap<String, (usize, f64, f64)>> = std::collections::HashMap::new();
@@ -250,12 +253,10 @@ fn req_wsdesamb(head: String, language: String, corpname: String, window: Option
             let mut rng = SmallRng::seed_from_u64(
                 ((collx.id as u64) << 10) + (relx.id as u64));
             let itf = || -> Box<dyn Iterator<Item=(usize, Option<i32>)>> {
-                if sampleconc > 0 {
-                    if sampleconc < collx.cnt {
-                        return Box::new(
-                            it.sample(sampleconc as usize, &mut rng)
-                        )
-                    }
+                if sampleconc > 0 && sampleconc < collx.cnt {
+                    return Box::new(
+                        it.sample(sampleconc as usize, &mut rng)
+                    )
                 }
                 Box::new(it)
             };
@@ -328,7 +329,7 @@ fn req_wsdesamb(head: String, language: String, corpname: String, window: Option
                 // print!("\t{:.2}/{:.2}", -1., -1.);
                 (999, -1., -1.)
             };
-            return Some((colls.to_string(), oc));
+            Some((colls.to_string(), oc))
             //out_coll.insert(colls.to_string(), oc);
             /*
             print!("\t{}", zst.iter()
@@ -357,7 +358,7 @@ fn req_wsdesamb(head: String, language: String, corpname: String, window: Option
 
     match serde_json::to_string(&out_rel) {
         Ok(s) => Ok(rocket::response::content::RawJson(s)),
-        Err(e) => Err(format!("failed to encode response as json: {}", e).into()),
+        Err(e) => Err(format!("failed to encode response as json: {}", e)),
     }
 }
 
@@ -365,8 +366,7 @@ fn req_wsdesamb(head: String, language: String, corpname: String, window: Option
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    let mut config = rocket::Config::default();
-    config.port = args.port;
+    let config = rocket::Config { port: args.port, ..Default::default() };
 
     let models = std::sync::Arc::new(std::sync::RwLock::new(HashMap::new()));
     let modellist = std::fs::read_to_string(args.modelfile)?

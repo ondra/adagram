@@ -204,7 +204,7 @@ pub fn exp_normalize(x: &mut Array<f64, Ix1>) {
 }
 
 fn _cast_slice<T>(s: &[T]) -> &[u8] {
-    let nbytes = s.len() * std::mem::size_of::<T>();
+    let nbytes = std::mem::size_of_val(s);
     unsafe { std::slice::from_raw_parts(s.as_ptr() as *const u8, nbytes) }
 }
 
