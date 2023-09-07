@@ -11,6 +11,8 @@ use adagram::nn::nearest;
 use adagram::reservoir_sampling::SamplerExt;
 use adagram::runningstats::RunningStats;
 
+use rayon::prelude::*;
+
 use corp::wsketch::WMap;
 use corp::wsketch::WSLex;
 
@@ -128,7 +130,6 @@ fn req_list_models(state: &rocket::State<ServerState>)
     }
 }
 
-use rayon::prelude::*;
 #[get("/<head>?<neighbors>&<language>")]
 fn req_neighbors(head: String, neighbors: Option<usize>, language: String, state: &rocket::State<ServerState>)
         -> Result<rocket::response::content::RawJson<String>, String> {
@@ -164,6 +165,35 @@ fn req_neighbors(head: String, neighbors: Option<usize>, language: String, state
     }).collect();
 
     match serde_json::to_string(&out_senses) {
+        Ok(s) => Ok(rocket::response::content::RawJson(s)),
+        Err(e) => Err(format!("failed to encode response as json: {}", e)),
+    }
+}
+
+#[get("/<head>?<corpname>&<language>")]
+fn req_has_senses(head: String, language: String, corpname: String,
+            state: &rocket::State<ServerState>) -> Result<rocket::response::content::RawJson<String>, String> {
+    let has_senses = (|| {
+        {
+            let mr = state.models.read().unwrap();
+            if mr.get(&language).is_none() {
+                return vec![("has_senses", "no"), ("why", "no model for language")];
+            };
+            // release RWLock
+        }
+        let corp = match corp::corp::Corpus::open(&corpname) {
+            Ok(c) => c,
+            Err(e) => return vec![("has_senses", "no"), ("why", "corpus open error")],
+        };
+        if corp.get_conf("VIRTUAL").is_some() {
+            return vec![("has_senses", "no"), ("why", "corpus is virtual")];
+        }
+        return vec![("has_senses", "yes")];
+    })();
+
+    let out: std::collections::HashMap<String, String>;
+    out = has_senses.iter().map(|(x, y)| { (x.to_string(), y.to_string()) }).collect();
+    match serde_json::to_string(&out) {
         Ok(s) => Ok(rocket::response::content::RawJson(s)),
         Err(e) => Err(format!("failed to encode response as json: {}", e)),
     }
@@ -403,6 +433,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .mount("/neighbors/", routes![req_neighbors])
     .mount("/wsdesamb/", routes![req_wsdesamb])
+    .mount("/has_senses/", routes![req_has_senses])
     .mount("/models/", routes![req_load_model, req_unload_model, req_list_models])
     .launch().await?;
 
