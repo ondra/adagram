@@ -19,4 +19,5 @@ futures = "0.3.28"
 serde_json = "1.0.99"
 tokio = { version = "1.28.2", features = ["full"] }
 rayon = "1.7.0"
+statrs = "0.16.0"
 #hogwild = "0.6.1"
