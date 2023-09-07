@@ -148,18 +148,19 @@ fn req_neighbors(head: String, neighbors: Option<usize>, language: String, state
 
     let nsenses = vm.in_vecs.len_of(Axis(1));
 
-    let out_senses: HashMap<usize, Vec<(String, u32, f32)>> =
+    let out_senses: HashMap<usize, (Vec<(String, u32, f32, f32)>, f32)> =
             (0..nsenses).into_par_iter().map(|i| { 
         let min_count = 5;
         let r = nearest(vm, head_mid as usize, i,
                         neighbors.unwrap_or(5), min_count);
+        let modelcount = vm.counts[[head_mid as usize, i]];
         // print!("# sense {} ({}):", i, state.vm.counts[[head_mid as usize, i]]);
         let mut vec_neighbors = Vec::new();
         for (mid, senseno, sim) in r {
-            vec_neighbors.push((id2str[mid as usize].to_string(), senseno, sim));
+            vec_neighbors.push((id2str[mid as usize].to_string(), senseno, sim, vm.counts[[mid as usize, senseno as usize]]));
             // print!("\t{}##{}/{:.3}", state.id2str[mid as usize], senseno, sim);
         }
-        (i, vec_neighbors)
+        (i, (vec_neighbors, modelcount))
     }).collect();
 
     match serde_json::to_string(&out_senses) {
