@@ -230,7 +230,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         words_read_last = local_words_read;
                         let wps = rws as f64 / dur;
                         let remaining_words = total_words - local_words_read;
-                        let remaining_secs = remaining_words / wps as usize;
+                        let remaining_secs = if wps != 0.0 { remaining_words / wps as usize } else { 0 };
                         let remaining_hours = remaining_secs / 3600;
                         let remaining_mins = (remaining_secs % 3600) / 60;
                         eprint!("\rvisited {} positions out of {} ({:.2} %), {:.0} wps, {:02}h:{:02}m remaining, lr {:.5}", //, {} spw",
