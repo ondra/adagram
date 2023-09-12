@@ -206,6 +206,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let partsize = doc_cnt / args.threads;
         let startdoc = partsize * thread_id;
+        let starttime = std::time::Instant::now();
+        let mut total_ll1 = 0.0f64;
+        let mut total_ll2 = 0.0f64;
 
         for rawdoc in dociterm(doc.as_ref(), attr.as_ref(), &oid_to_nid, startdoc) {
             let doc = preprocess(&rawdoc, freqs.as_slice().unwrap(),
@@ -233,12 +236,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let remaining_secs = if wps != 0.0 { remaining_words / wps as usize } else { 0 };
                         let remaining_hours = remaining_secs / 3600;
                         let remaining_mins = (remaining_secs % 3600) / 60;
-                        eprint!("\rvisited {} positions out of {} ({:.2} %), {:.0} wps, {:02}h:{:02}m remaining, lr {:.5}", //, {} spw",
+                        reporttime = std::time::Instant::now();
+                        let elapsed = reporttime.checked_duration_since(starttime).map(|d| d.as_secs()).unwrap_or(0);
+                        eprint!("\r[{}] visited {} positions out of {} ({:.2} %), {:.0} wps, {:02}h:{:02}m remaining, lr {:.5} ll {:.7}", elapsed,
                                   local_words_read, total_words, local_words_read as f64 / total_words as f64 * 100.0,
-                                  wps, remaining_hours, remaining_mins, lr1,
+                                  wps, remaining_hours, remaining_mins, lr1, total_ll1,
                                   // senses as f32 / local_words_read as f32);
                                   );
-                        reporttime = std::time::Instant::now();
                     }
                 }
 
@@ -266,13 +270,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 for j in std::cmp::max(0, i as isize - window)..std::cmp::min(doc.len() as isize, i as isize + window) {
                     if i as isize == j { continue; }
                     let y = doc[j as usize];
-                    let _ll = in_place_update(&mut in_mut, &mut out_mut, &counts_mut,
+                    let ll = in_place_update(&mut in_mut, &mut out_mut, &counts_mut,
                                              x, y, &z,
                                              &code, &path,
                                              lr1, &mut in_grad,
                                              &mut out_grad, args.sense_threshold);
-                    //total_ll2 += 1.;
-                    //total_ll1 += (ll - total_ll1) / total_ll2;
+                    total_ll2 += 1.;
+                    total_ll1 += (ll - total_ll1) / total_ll2;
                 }
 
                 var_update_counts(&freqs, &mut counts_mut, x, &z, lr2);
