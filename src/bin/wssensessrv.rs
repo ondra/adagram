@@ -83,16 +83,17 @@ fn load_model(modellang: &str, modelpath: &str,
         mr.get(modellang).is_some()
     };
     if !has_model {
-        eprintln!("loading model");
+        info!("loading model for {} from {}", &modellang, &modelpath);
         let (vm, id2str) = VectorModel::load_model(modelpath)?;
 
-        eprintln!("inverting model lexicon");
+        info!("inverting model lexicon for {} from {}", &modellang, &modelpath);
         let str2id = id2str.iter().enumerate().par_bridge()
             .map(|(id, word)| { (word.to_string(), id as u32) })
             .collect::<HashMap<String, u32>>();
 
         let mut mw = models.write().unwrap();
         mw.insert(modellang.to_string(), (vm, id2str, str2id));
+        info!("loaded model for {} from {}", &modellang, &modelpath);
     }
     Ok(())
 }
@@ -103,7 +104,7 @@ fn unload_model(modellang: &str,
     let mut mw = models.write().unwrap();
     match mw.remove(modellang) {
         Some(_model) => Ok(()),
-        None => Err(format!("model {} not loaded", modellang).into()),
+        None => Err(format!("model for {} not loaded", modellang).into()),
     }
 }
 
@@ -128,6 +129,28 @@ fn req_list_models(state: &rocket::State<ServerState>)
         Ok(s) => Ok(rocket::response::content::RawJson(s)),
         Err(e) => Err(format!("failed to encode response as json: {}", e)),
     }
+}
+
+#[get("/")]
+fn req_list_cmaps(state: &rocket::State<ServerState>)
+        -> Result<rocket::response::content::RawJson<String>, String> {
+    let cr = {
+        let cmaps = state.cmaps.read().unwrap();
+        cmaps.iter()
+            .map(|(corpname, cmap)| (corpname.to_string(), cmap.len()))
+            .collect::<Vec<_>>()
+    };
+    match serde_json::to_string(&cr) {
+        Ok(s) => Ok(rocket::response::content::RawJson(s)),
+        Err(e) => Err(format!("failed to encode response as json: {}", e)),
+    }
+}
+
+#[delete("/")]
+fn req_delete_cmaps(state: &rocket::State<ServerState>)
+        -> (){
+    let mut cmaps = state.cmaps.write().unwrap();
+    cmaps.clear();
 }
 
 #[get("/<head>?<neighbors>&<language>")]
@@ -183,7 +206,7 @@ fn req_has_senses(head: String, language: String, corpname: String,
         }
         let corp = match corp::corp::Corpus::open(&corpname) {
             Ok(c) => c,
-            Err(e) => return vec![("has_senses", "no"), ("why", "corpus open error")],
+            Err(_e) => return vec![("has_senses", "no"), ("why", "corpus open error")],
         };
         if corp.get_conf("VIRTUAL").is_some() {
             return vec![("has_senses", "no"), ("why", "corpus is virtual")];
@@ -230,13 +253,14 @@ fn req_wsdesamb(head: String, language: String, corpname: String, window: Option
         if !has_c2m {
             let mut mw = state.cmaps.write().unwrap();
 
-            eprintln!("mapping corpus and model lexicon");
+            info!("mapping corpus {} to {} model lexicon", &corpname, &language);
             let corpid2id = (0..wsattr.id_range()).into_par_iter().map(|corpid| {
                 let cval = wsattr.id2str(corpid);
                 *str2id.get(cval).unwrap_or(&u32::MAX)
             }).collect::<Vec<u32>>();
 
             mw.insert(corpname.clone(), corpid2id);
+            info!("mapping corpus {} to {} model lexicon finished", &corpname, &language);
         }
     };
 
@@ -397,7 +421,16 @@ fn req_wsdesamb(head: String, language: String, corpname: String, window: Option
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    let config = rocket::Config { port: args.port, ..Default::default() };
+    simple_logger::SimpleLogger::new()
+        .with_utc_timestamps()
+        .with_level(log::LevelFilter::Info)
+        .init().unwrap();
+
+    let config = rocket::Config {
+        port: args.port,
+        log_level: rocket::config::LogLevel::Normal,
+        ..Default::default()
+    };
 
     let models = std::sync::Arc::new(std::sync::RwLock::new(HashMap::new()));
     let modellist = std::fs::read_to_string(args.modelfile)?
@@ -406,8 +439,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let stripped = line.trim();
             let parts = stripped.split('\t').collect::<Vec<_>>();
             if parts.len() != 2 {
-                eprintln!("wrong number of elements while parsing modelfile: {}, should be 2", parts.len());
-                eprintln!("got '{}'", stripped);
+                warn!("wrong number of elements while parsing modelfile: {}, should be 2", parts.len());
+                warn!("got '{}'", stripped);
                 return None;
             }
             Some((parts[0].to_string(), parts[1].to_string()))
@@ -419,8 +452,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::spawn(async move {
             for (modellang, modelpath) in modellist {
                 match load_model(&modellang, &modelpath, &models) {
-                    Ok(_) => eprintln!("model {} for {} loaded", &modelpath, &modellang),
-                    Err(e) => eprintln!("loading model {} for {} failed: {}", &modelpath, &modellang, &e),
+                    Ok(_) => info!("model {} for {} loaded", &modelpath, &modellang),
+                    Err(e) => warn!("loading model {} for {} failed: {}", &modelpath, &modellang, &e),
                 };
             }
         });
@@ -434,6 +467,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .mount("/neighbors/", routes![req_neighbors])
     .mount("/wsdesamb/", routes![req_wsdesamb])
     .mount("/has_senses/", routes![req_has_senses])
+    .mount("/cmaps/", routes![req_list_cmaps, req_delete_cmaps])
     .mount("/models/", routes![req_load_model, req_unload_model, req_list_models])
     .launch().await?;
 
