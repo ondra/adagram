@@ -35,6 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("sorting by sense counts");
     let ii = vm.in_vecs.len_of(Axis(0));
     let jj = vm.in_vecs.len_of(Axis(1));
+    let kk = vm.in_vecs.len_of(Axis(2));
     let mut indices = Vec::new();
     let mut z = Array::<f64, Ix1>::zeros(jj);
     for i in 0..ii {
@@ -48,12 +49,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     indices.reverse();
 
     eprintln!("writing {}", tgtmodelpath);
+    writeln!(dicf, "{}", indices.len());
+    writeln!(dicf, "{}", kk);
     for (i, j) in indices {
         writeln!(dicf, "{}##{}", id2str[i], j)?;
         for e in vm.in_vecs.slice(s![i, j, ..]).iter() {
             bvecf.write_all(&e.to_le_bytes())?;
         }
     }
+
+    bvecf.flush()?;
+    dicf.flush()?;
 
     eprintln!("done");
     Ok(())
