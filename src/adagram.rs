@@ -140,14 +140,18 @@ impl VectorModel {
                 //line.clear();
                 //rf.read_line(&mut line).expect("y");
                 let senseno = line.trim().parse::<usize>()? - 1;
+                if senseno < 0 || senseno > nsenses {
+                    eprintln!("bad senseno {}", senseno);
+                }
                 for k in 0..dim {
                     rf.read_exact(&mut buf)?;
                     vm.in_vecs[[i, senseno, k]] = f32::from_le_bytes(buf);
                 }
                 line.clear();
                 rf.read_line(&mut line).expect("x");
-                assert!(line.trim() == "");
-
+                if line.trim() != "" {
+                    eprintln!("bad line {}, idx {}/{}, word {}", &line.trim(), i, lexsize, id2str[i]);
+                };
 
                 ///////////////// HACK HACK HACK ////////////////////////
                 //  the writer does not store the number of senses properly:
@@ -159,9 +163,41 @@ impl VectorModel {
                     Ok(n) => /* it's a number */ {
                         if (n-1) > senseno && (n-1) < nsenses {
                             /* looks like a new sense */
+                            let buf = rf.fill_buf()?;
+                            let mut state = 0;  // 0 init
+                            for ix in 0..buf.len() {
+                                let cr = buf[ix];
+                                let next_state = match state {
+                                    0 => if cr >= b'1' && cr <= b'9' {        1 } else { 99 },
+                                    1 => if cr >= b'0' && cr <= b'2' {        2 }
+                                        else if cr == 10 {                    3 }else { 99 },
+                                    2 => if cr == 10 {                        3 } else { 99 },
+                                    3 => if cr >= b'1' && cr <= b'9' {        4 } else { 99 },
+                                    4 => if cr >= b'0' && cr <= b'2'  {       5 }
+                                         else if cr == 10 {                   10} else { 99 },
+                                    5 => if cr == 10 {                        10} else { 99 },
+                                    others =>                                 99,
+                                };
+                                state = next_state;
+                                if state == 10 || state == 99 { break; }
+                            }
+                            match state {
+                                10 => {
+                                    eprintln!("parsing record after id {}, got {}", i, state);
+                                    break; // got two numbers followed by newlines
+                                },
+                                99 => {
+                                    // not a new word
+                                },
+                                _ => {
+                                    eprintln!("parsing record after id {}, got {}", i, state);
+                                },
+                            }
+
+                            // this is probably a new sense
                             // continue;
                         } else {
-                            /* it's a number, but the value is un expected value -> a new lexicon element */
+                            /* it's a number, but the value is unexpected -> a new lexicon element */
                             break;
                         }
                     },
