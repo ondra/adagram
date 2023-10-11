@@ -140,7 +140,7 @@ impl VectorModel {
                 //line.clear();
                 //rf.read_line(&mut line).expect("y");
                 let senseno = line.trim().parse::<usize>()? - 1;
-                if senseno < 0 || senseno > nsenses {
+                if senseno > nsenses {
                     eprintln!("bad senseno {}", senseno);
                 }
                 for k in 0..dim {
@@ -176,7 +176,7 @@ impl VectorModel {
                                     4 => if cr >= b'0' && cr <= b'2'  {       5 }
                                          else if cr == 10 {                   10} else { 99 },
                                     5 => if cr == 10 {                        10} else { 99 },
-                                    others =>                                 99,
+                                    _ =>                                      99,
                                 };
                                 state = next_state;
                                 if state == 10 || state == 99 { break; }

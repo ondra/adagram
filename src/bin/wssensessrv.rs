@@ -194,6 +194,7 @@ fn req_neighbors(head: String, neighbors: Option<usize>, language: String, state
 }
 
 #[get("/<head>?<corpname>&<language>")]
+#[allow(unused_variables)]
 fn req_has_senses(head: String, language: String, corpname: String,
             state: &rocket::State<ServerState>) -> Result<rocket::response::content::RawJson<String>, String> {
     let has_senses = (|| {
