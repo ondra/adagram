@@ -49,8 +49,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     indices.reverse();
 
     eprintln!("writing {}", tgtmodelpath);
-    writeln!(dicf, "{}", indices.len());
-    writeln!(dicf, "{}", kk);
+    writeln!(dicf, "{}", indices.len())?;
+    writeln!(dicf, "{}", kk)?;
     for (i, j) in indices {
         writeln!(dicf, "{}##{}", id2str[i], j)?;
         for e in vm.in_vecs.slice(s![i, j, ..]).iter() {
