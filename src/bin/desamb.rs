@@ -30,6 +30,10 @@ struct Args {
     // skip the first line of input
     #[clap(long,default_value_t=false)]
     skip_header: bool,
+
+    // number of tab-separated columns to skip from the left for processing
+    #[clap(long, default_value_t=0)]
+    skip_columns: usize,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -66,8 +70,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     for maybeline in lines {
         let fullline = maybeline?;
-        let line = fullline.trim();
+        let line = fullline.trim_end_matches(|c| { c == '\n' || c == '\r' || c == ' '});
         let mut cols = line.split('\t');
+
+        for _ in 0..args.skip_columns {
+            cols.next();
+        }
+
         let head = match cols.next() {
             Some(x) => x,
             None => {
@@ -126,13 +135,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|(i, _)| i);
 
         if args.mirror_input {
-            print!("{}", line);
+            print!("{}\t", line);
         }
 
         if let Some(mp) = maxpos {
-            print!("\t{}", mp);
+            print!("{}", mp);
         } else {
-            print!("\t-1");
+            print!("-1");
         }
 
         if args.print_probs {
