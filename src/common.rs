@@ -17,9 +17,7 @@ pub fn meanlog_mirror(a: F, b: F) -> F { meanlog_beta(b, a) }
 
 
 pub fn expected_pi<C: Data<Elem=f32>, Z: DataMut<Elem=f64>>
-        (counts: &ArrayBase<C, Ix2>, alpha: f64, w: u32, pi: &mut ArrayBase<Z, Ix1>) -> u32 {
-    let min_prob = 1e-3f64;  // fixme
-
+        (counts: &ArrayBase<C, Ix2>, alpha: f64, w: u32, pi: &mut ArrayBase<Z, Ix1>, min_prob: f64) -> u32 {
     let nmeanings = counts.len_of(Axis(1));
 
     let mut r = 1.;

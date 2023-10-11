@@ -94,7 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         };
 
-        let _n_senses = expected_pi(&vm.counts, vm.alpha, x, &mut z);
+        let _n_senses = expected_pi(&vm.counts, vm.alpha, x, &mut z, 1e-3f64);
 
         for zk in z.iter_mut() {
             if *zk < 1e-3 { *zk = 0.; }

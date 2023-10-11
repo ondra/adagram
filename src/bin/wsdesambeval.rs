@@ -180,7 +180,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 for (pos, _coll) in itf() {
                     let _n_senses = expected_pi(&vm.counts, vm.alpha,
-                                                head_mid, &mut z);
+                                                head_mid, &mut z, 1e-3f64);
 
                     for zk in z.iter_mut() {
                         if *zk < 1e-3 { *zk = 0.; }

@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut indices = Vec::new();
     let mut z = Array::<f64, Ix1>::zeros(jj);
     for i in 0..ii {
-        let _nsenses = expected_pi(&vm.counts, vm.alpha, i as u32, &mut z);
+        let _nsenses = expected_pi(&vm.counts, vm.alpha, i as u32, &mut z, 1e-3f64);
         for j in 0..jj {
             if z[j] < min_prob { continue; }
             indices.push((i, j)); 

@@ -235,7 +235,7 @@ impl VectorModel {
         let mut z = Array::<f64, Ix1>::zeros(s[1]);
 
         for v in 0..s[0] {
-            let nsenses = expected_pi(&self.counts, self.alpha, v as u32, &mut z);
+            let nsenses = expected_pi(&self.counts, self.alpha, v as u32, &mut z, min_prob);
             writeln!(vecf, "{}", id2word(v as u32))?;
             writeln!(vecf, "{}", nsenses)?;
             for k in 0..s[1] {
