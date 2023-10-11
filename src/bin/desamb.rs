@@ -34,19 +34,16 @@ struct Args {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    if std::env::args().count() != 2 {
-        return Err("usage: desamb MODELPATH".into());
-    }
 
-    // load model
-    let modelpath = args.model;
-    let (vm, id2str) = VectorModel::load_model(&modelpath)?;
+    eprintln!("loading {}", args.model);
+    let (vm, id2str) = VectorModel::load_model(&args.model)?;
 
-    // build reverse lexicon mapping
+    eprintln!("building str2id");
     let mut str2id = std::collections::HashMap::<&str, u32>::with_capacity(id2str.len());
     for (id, word) in id2str.iter().enumerate() {
         str2id.insert(word, id as u32);
     }
+    eprintln!("done");
 
     let mut _headword_not_in_lexicon = 0;
     let mut _no_context = 0;
