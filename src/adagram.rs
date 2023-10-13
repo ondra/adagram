@@ -214,43 +214,50 @@ impl VectorModel {
         Ok((vm, id2str))
     }
 
-    pub fn save_model<F>(&self, path: &str, min_prob: f64, id2word: F)
+    pub fn save_model<F>(&self, vecf: &mut std::fs::File, min_prob: f64, id2word: F)
             -> Result<(), Box<dyn std::error::Error>>
             where F: Fn(u32) -> String {
-        let tmppath = path.to_string() + ".tmp";
-        let mut vecf = std::io::BufWriter::new(
-            std::fs::File::create(&tmppath)?);
-    
+        let mut vecwr = std::io::BufWriter::new(vecf);
         let s = self.in_vecs.shape();
-        writeln!(vecf, "{} {} {}", s[0], s[2], s[1])?;
-        writeln!(vecf, "{} {}", self.alpha, 0)?;
-        writeln!(vecf, "{}", self.code.len_of(Axis(1)))?;
+        writeln!(vecwr, "{} {} {}", s[0], s[2], s[1])?;
+        writeln!(vecwr, "{} {}", self.alpha, 0)?;
+        writeln!(vecwr, "{}", self.code.len_of(Axis(1)))?;
 
-        for &e in self.freqs.iter() { vecf.write_all(&e.to_le_bytes())?; };
-        for &e in self.code.iter() { vecf.write_all(&e.to_le_bytes())?; };
-        for &e in self.path.iter() { vecf.write_all(&e.to_le_bytes())?; };
-        for &e in self.counts.iter() { vecf.write_all(&e.to_le_bytes())?; };
-        for &e in self.out_vecs.iter() { vecf.write_all(&e.to_le_bytes())?; };
+        for &e in self.freqs.iter() { vecwr.write_all(&e.to_le_bytes())?; };
+        for &e in self.code.iter() { vecwr.write_all(&e.to_le_bytes())?; };
+        for &e in self.path.iter() { vecwr.write_all(&e.to_le_bytes())?; };
+        for &e in self.counts.iter() { vecwr.write_all(&e.to_le_bytes())?; };
+        for &e in self.out_vecs.iter() { vecwr.write_all(&e.to_le_bytes())?; };
 
         let mut z = Array::<f64, Ix1>::zeros(s[1]);
 
         for v in 0..s[0] {
             let nsenses = expected_pi(&self.counts, self.alpha, v as u32, &mut z, min_prob);
-            writeln!(vecf, "{}", id2word(v as u32))?;
-            writeln!(vecf, "{}", nsenses)?;
+            writeln!(vecwr, "{}", id2word(v as u32))?;
+            writeln!(vecwr, "{}", nsenses)?;
             for k in 0..s[1] {
                 if z[k] < min_prob { continue; }
-                writeln!(vecf, "{}", k+1)?;
+                writeln!(vecwr, "{}", k+1)?;
                 for e in self.in_vecs.slice(s![v, k, ..]).iter() {
-                    vecf.write_all(&e.to_le_bytes())?;
+                    vecwr.write_all(&e.to_le_bytes())?;
                 };
-                writeln!(vecf)?;
+                writeln!(vecwr)?;
             }
         }
 
-        vecf.flush()?;
-        std::mem::drop(vecf);
+        vecwr.flush()?;
+
+        Ok(())
+    }
+
+    pub fn save_model_atomic<F>(&self, path: &str, min_prob: f64, id2word: F)
+            -> Result<(), Box<dyn std::error::Error>>
+            where F: Fn(u32) -> String {
+        let tmppath = path.to_string() + ".tmp";
+        let mut vecf = std::fs::File::create(&tmppath)?;
     
+        self.save_model(&mut vecf, min_prob, id2word)?;
+        std::mem::drop(vecf);
         std::fs::rename(tmppath, path)?;
 
         Ok(())

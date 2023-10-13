@@ -90,6 +90,10 @@ struct Args {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+
+    let tmpoutpath = args.outpath.to_string() + ".tmp";
+    let mut outfile = std::fs::File::create(&args.outpath)?;
+
     let corp = corp::corp::Corpus::open(&args.corpname)?;
     let attr: Box<dyn corp::corp::Attr> = corp.open_attribute(&args.attrname)?;
 
@@ -328,9 +332,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     vm.out_vecs = std::sync::Arc::try_unwrap(out_vecs_m.into_inner()).expect("fuck").into_inner();
     vm.counts = std::sync::Arc::try_unwrap(counts_m.into_inner()).expect("fuck").into_inner();
     let id2word = |id| attr.id2str(ixs[id as usize]).to_string();
-    vm.save_model(&(args.outpath.to_string()), args.save_threshold, id2word)?;
-    //println!("{:?}", ht.softmax_path(args.dim));
-    //dbg!(ht.convert());
+
+    vm.save_model(&mut outfile, args.save_threshold, id2word)?;
+    use std::io::Write;
+    outfile.flush()?;
+    std::mem::drop(outfile);
+    std::fs::rename(tmpoutpath, args.outpath)?;
+
     Ok(())
 }
 
