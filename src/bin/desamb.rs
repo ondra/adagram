@@ -31,6 +31,10 @@ struct Args {
     #[clap(long)]
     skip_header: bool,
 
+    /// write column names as the first output line
+    #[clap(long)]
+    print_header: bool,
+
     /// number of tab-separated columns to skip from the left for processing
     #[clap(long, default_value_t=0)]
     skip_columns: usize,
@@ -59,30 +63,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut z = Array::<f64, Ix1>::zeros(vm.nmeanings());
     let mut lines = std::io::stdin().lines().into_iter();
-    if args.skip_header {
+    let colnames = if args.skip_header {
         if let Some(maybeline) = lines.next() {
             let fullline = maybeline?;
-            let line = fullline.trim();
-            if args.mirror_input {
-                print!("{}\tcluster", line);
-                if args.print_probs {
-                    print!("\tcluster_probs");
-                }
-                println!();
-            }
-        }
+            let line = fullline.trim_end_matches(|c| { c == '\n' || c == '\r' || c == ' '});
+            line.split("\t").take(args.skip_columns).map(|v| v.to_string()).collect::<Vec<_>>()
+        } else { vec![] }
+    } else { vec![] };
+
+    if args.print_header {
+        for colname in colnames { print!("{}\t", colname); }
+        print!("head\tcontext");
+        if args.print_status { print!("\tstatus"); }
+        print!("\tcluster");
+        if args.print_probs { print!("\tcluster_probs") };
+        println!();
     }
+
     for maybeline in lines {
         let fullline = maybeline?;
         let line = fullline.trim_end_matches(|c| { c == '\n' || c == '\r' || c == ' '});
         let mut cols = line.split('\t');
 
-        if args.mirror_input {
-            print!("{}\t", line);
-        }
-
         for _ in 0..args.skip_columns {
-            cols.next();
+            let colv = match cols.next() {
+                Some(col) => { col },
+                None => { "" },
+            };
+            if args.mirror_input {
+                print!("{}\t", colv);
+            }
         }
 
         let head = match cols.next() {
