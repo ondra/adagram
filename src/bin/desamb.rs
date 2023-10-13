@@ -27,6 +27,10 @@ struct Args {
     #[clap(long,default_value_t=true)]
     print_probs: bool,
 
+    /// output the total number of apriori senses
+    #[clap(long,default_value_t=true)]
+    print_nsenses: bool,
+
     /// skip the first line of input
     #[clap(long)]
     skip_header: bool,
@@ -42,6 +46,10 @@ struct Args {
     /// emit column with desambiguation status
     #[clap(long, default_value_t=true)]
     print_status: bool,
+
+    /// minimum probability for a sense to be taken into consideration
+    #[clap(long, default_value_t=1e-3f64)]
+    min_prob: f64,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -77,6 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if args.print_status { print!("\tstatus"); }
         print!("\tcluster");
         if args.print_probs { print!("\tcluster_probs") };
+        if args.print_nsenses { print!("\tnsenses") };
         println!();
     }
 
@@ -98,7 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let head = match cols.next() {
             Some(x) => x,
             None => {
-                eprintln!("=== EMPTY INPUT ===");
+                // eprintln!("=== EMPTY INPUT ===");
                 if args.print_status {
                     print!("empty");
                 }
@@ -108,9 +117,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         let x = match str2id.get(head) {
-            Some(n) => *n,
+            Some(n) => {
+                if args.mirror_input { print!("{}\t", n) }
+                *n
+            },
             None => {
-                eprintln!("=== HEADWORD NOT IN LEXICON: {} ===", head);
+                // eprintln!("=== HEADWORD NOT IN LEXICON: {} ===", head);
+                if args.mirror_input {
+                    print!("\t\t");
+                }
                 if args.print_status {
                     print!("nhead");
                 }
@@ -120,10 +135,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         };
 
-        let _n_senses = expected_pi(&vm.counts, vm.alpha, x, &mut z, 1e-3f64);
+        let n_senses = expected_pi(&vm.counts, vm.alpha, x, &mut z, args.min_prob);
 
         for zk in z.iter_mut() {
-            if *zk < 1e-3 { *zk = 0.; }
+            if *zk < args.min_prob { *zk = 0.; }
             *zk = zk.ln();  // ???
         }
 
@@ -131,9 +146,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut _ninvalid = 0;
 
         match cols.next() {
-            None => {
-                _no_context += 1;
-            },
             Some(context) => {
                 let parts = context.split_whitespace();
                 for ctxword in parts {
@@ -146,6 +158,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     };
                     var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path, x, y, &mut z);
                 }
+                if args.mirror_input { print!("{}\t", context) }
+            },
+            None => {
+                _no_context += 1;
+                if args.mirror_input { print!("\t") }
             },
         }
 
@@ -167,11 +184,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         print!("\t");
 
-        if let Some(mp) = maxpos {
-            print!("{}", mp);
-        } else {
-            print!("-1");
-        }
+        if let Some(mp) = maxpos { print!("{}", mp); }
+        else { print!("-1"); }
 
         if args.print_probs {
             print!("\t{}", z.iter()
@@ -180,6 +194,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                      .collect::<Vec<String>>()  // won't be necessary in future rust
                      .join(" "));
         }
+        if args.print_nsenses { print!("\t{}", n_senses); }
         println!();
     }
 
