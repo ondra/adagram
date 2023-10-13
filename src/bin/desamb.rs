@@ -23,17 +23,21 @@ struct Args {
     #[clap(long,default_value_t=true)]
     mirror_input: bool,
 
-    // output probabilities for all senses
+    /// output probabilities for all senses
     #[clap(long,default_value_t=true)]
     print_probs: bool,
 
-    // skip the first line of input
-    #[clap(long,default_value_t=false)]
+    /// skip the first line of input
+    #[clap(long)]
     skip_header: bool,
 
-    // number of tab-separated columns to skip from the left for processing
+    /// number of tab-separated columns to skip from the left for processing
     #[clap(long, default_value_t=0)]
     skip_columns: usize,
+
+    /// emit column with desambiguation status
+    #[clap(long, default_value_t=true)]
+    print_status: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -73,6 +77,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let line = fullline.trim_end_matches(|c| { c == '\n' || c == '\r' || c == ' '});
         let mut cols = line.split('\t');
 
+        if args.mirror_input {
+            print!("{}\t", line);
+        }
+
         for _ in 0..args.skip_columns {
             cols.next();
         }
@@ -81,6 +89,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(x) => x,
             None => {
                 eprintln!("=== EMPTY INPUT ===");
+                if args.print_status {
+                    print!("empty");
+                }
+                println!();
                 continue
             },
         };
@@ -89,6 +101,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(n) => *n,
             None => {
                 eprintln!("=== HEADWORD NOT IN LEXICON: {} ===", head);
+                if args.print_status {
+                    print!("nhead");
+                }
+                println!();
                 _headword_not_in_lexicon += 1;
                 continue;
             },
@@ -125,6 +141,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if _nvalid < 1 {
             _all_invalid += 1;
+            if args.print_status {
+                print!("noctx");
+            } else {
+                print!("allok");
+            }
         }
 
         exp_normalize(&mut z);
@@ -134,9 +155,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .max_by(|(_, a), (_, b)| a.total_cmp(b))
             .map(|(i, _)| i);
 
-        if args.mirror_input {
-            print!("{}\t", line);
-        }
+        print!("\t");
 
         if let Some(mp) = maxpos {
             print!("{}", mp);
