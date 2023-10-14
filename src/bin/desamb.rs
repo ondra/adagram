@@ -66,8 +66,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("done");
 
     let mut _headword_not_in_lexicon = 0;
-    let mut _no_context = 0;
-    let mut _all_invalid = 0;
+    let mut ctx_empty = 0;
+    let mut ctx_all_unknown = 0;
 
     let mut z = Array::<f64, Ix1>::zeros(vm.nmeanings());
     let mut lines = std::io::stdin().lines().into_iter();
@@ -105,11 +105,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let head = match cols.next() {
-            Some(x) => x,
+            Some(x) => {
+                if args.mirror_input { print!("{}\t", x) }
+                x
+            },
             None => {
-                // eprintln!("=== EMPTY INPUT ===");
                 if args.print_status {
-                    print!("empty");
+                    print!("\t\tempty\t");
                 }
                 println!();
                 continue
@@ -118,13 +120,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let x = match str2id.get(head) {
             Some(n) => {
-                if args.mirror_input { print!("{}\t", n) }
                 *n
             },
             None => {
                 // eprintln!("=== HEADWORD NOT IN LEXICON: {} ===", head);
                 if args.mirror_input {
-                    print!("\t\t");
+                    print!("\t");
                 }
                 if args.print_status {
                     print!("nhead");
@@ -142,8 +143,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             *zk = zk.ln();  // ???
         }
 
-        let mut _nvalid = 0;
-        let mut _ninvalid = 0;
+        let mut nvalid = 0;
+        let mut ninvalid = 0;
 
         match cols.next() {
             Some(context) => {
@@ -153,26 +154,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         continue;
                     }
                     let y = match str2id.get(ctxword) {
-                        Some(n) => { _nvalid += 1; *n },
-                        None => { _ninvalid += 1; continue; },
+                        Some(n) => { nvalid += 1; *n },
+                        None => { ninvalid += 1; continue; },
                     };
                     var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path, x, y, &mut z);
                 }
                 if args.mirror_input { print!("{}\t", context) }
             },
             None => {
-                _no_context += 1;
                 if args.mirror_input { print!("\t") }
             },
         }
 
-        if _nvalid < 1 {
-            _all_invalid += 1;
-            if args.print_status {
-                print!("noctx");
+        if nvalid == 0 {
+            if ninvalid == 0 {
+                ctx_empty += 1;
+                if args.print_status { print!("noctx"); }
             } else {
-                print!("allok");
+                ctx_all_unknown += 1;
+                if args.print_status { print!("unctx"); }
             }
+        } else {
+            if args.print_status { print!("allok"); }
         }
 
         exp_normalize(&mut z);
@@ -198,9 +201,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!();
     }
 
-    eprintln!("encountered {} lines with no context", _no_context);
     eprintln!("encountered {} headwords not present in lexicon", _headword_not_in_lexicon);
-    eprintln!("encountered {} lines where no context words were found in lexicon", _all_invalid);
+    eprintln!("encountered {} lines where no context words were present", ctx_empty);
+    eprintln!("encountered {} lines where no context words were found in lexicon", ctx_all_unknown);
 
     Ok(())
 }
