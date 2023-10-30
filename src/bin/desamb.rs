@@ -71,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut z = Array::<f64, Ix1>::zeros(vm.nmeanings());
     let mut lines = std::io::stdin().lines().into_iter();
-    let colnames = if args.skip_header {
+    let mut colnames = if args.skip_header {
         if let Some(maybeline) = lines.next() {
             let fullline = maybeline?;
             let line = fullline.trim_end_matches(|c| { c == '\n' || c == '\r' || c == ' '});
@@ -79,41 +79,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else { vec![] }
     } else { vec![] };
 
+    colnames.resize(args.skip_columns, "".to_string());
+    for colno in 0..args.skip_columns {
+        if colnames[colno] == "" {
+            colnames[colno] = format!("col{}", colno);
+        }
+    }
+    colnames.push("head".to_string());
+    colnames.push("context".to_string());
+    if args.print_status { colnames.push("status".to_string()); }
+    colnames.push("cluster".to_string());
+    if args.print_probs { colnames.push("cluster_probs".to_string()) };
+    if args.print_nsenses { colnames.push("nsenses".to_string()) };
+
     if args.print_header {
         for colname in colnames { print!("{}\t", colname); }
-        print!("head\tcontext");
-        if args.print_status { print!("\tstatus"); }
-        print!("\tcluster");
-        if args.print_probs { print!("\tcluster_probs") };
-        if args.print_nsenses { print!("\tnsenses") };
         println!();
     }
 
+    let emit = |vs: Vec<_>| {
+        println!("{}", vs.join("\t"));
+    };
+
     for maybeline in lines {
+        let mut outvals = vec![];
+
         let fullline = maybeline?;
         let line = fullline.trim_end_matches(|c| { c == '\n' || c == '\r' || c == ' '});
         let mut cols = line.split('\t');
 
         for _ in 0..args.skip_columns {
-            let colv = match cols.next() {
-                Some(col) => { col },
-                None => { "" },
-            };
+            let cv = cols.next();
             if args.mirror_input {
-                print!("{}\t", colv);
+                if let Some(t) = cv { outvals.push(t.to_string()) }
+                else { outvals.push("".to_string()) }
             }
         }
 
         let head = match cols.next() {
             Some(x) => {
-                if args.mirror_input { print!("{}\t", x) }
+                if args.mirror_input { outvals.push(x.to_string()) }
                 x
             },
             None => {
-                if args.print_status {
-                    print!("\t\tempty\t");
+                if args.mirror_input {
+                    outvals.push("".to_string());
+                    outvals.push("".to_string());
                 }
-                println!();
+                if args.print_status {
+                    outvals.push("empty".to_string());
+                }
+                emit(outvals);
                 continue
             },
         };
@@ -125,12 +141,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             None => {
                 // eprintln!("=== HEADWORD NOT IN LEXICON: {} ===", head);
                 if args.mirror_input {
-                    print!("\t");
+                    outvals.push("".to_string());
                 }
                 if args.print_status {
-                    print!("nhead");
+                    outvals.push("nhead".to_string());
                 }
-                println!();
+                emit(outvals);
                 _headword_not_in_lexicon += 1;
                 continue;
             },
@@ -159,23 +175,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     };
                     var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path, x, y, &mut z);
                 }
-                if args.mirror_input { print!("{}\t", context) }
+                if args.mirror_input { outvals.push(context.to_string()) }
             },
             None => {
-                if args.mirror_input { print!("\t") }
+                if args.mirror_input { outvals.push("".to_string()) }
             },
         }
 
         if nvalid == 0 {
             if ninvalid == 0 {
                 ctx_empty += 1;
-                if args.print_status { print!("noctx"); }
+                if args.print_status { outvals.push("noctx".to_string()); }
             } else {
                 ctx_all_unknown += 1;
-                if args.print_status { print!("unctx"); }
+                if args.print_status { outvals.push("unctx".to_string()); }
             }
         } else {
-            if args.print_status { print!("allok"); }
+            if args.print_status { outvals.push("allok".to_string()); }
         }
 
         exp_normalize(&mut z);
@@ -185,20 +201,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .max_by(|(_, a), (_, b)| a.total_cmp(b))
             .map(|(i, _)| i);
 
-        print!("\t");
-
-        if let Some(mp) = maxpos { print!("{}", mp); }
-        else { print!("-1"); }
+        if let Some(mp) = maxpos { outvals.push(format!("c{}", mp)) }
+        else { outvals.push("-1".to_string()) }
 
         if args.print_probs {
-            print!("\t{}", z.iter()
+            outvals.push(format!("{}", z.iter()
                      .enumerate()
                      .map(|(i, p): (usize, &f64)|->String {format!("{}:{:.2}", i, p)})
                      .collect::<Vec<String>>()  // won't be necessary in future rust
-                     .join(" "));
+                     .join(" ")));
         }
-        if args.print_nsenses { print!("\t{}", n_senses); }
-        println!();
+        if args.print_nsenses { outvals.push(format!("{}", n_senses)) }
+        emit(outvals);
     }
 
     eprintln!("encountered {} headwords not present in lexicon", _headword_not_in_lexicon);
