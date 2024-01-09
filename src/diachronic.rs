@@ -64,7 +64,7 @@ fn create_tag_ordering(keys: Vec<&str>) -> Vec<(usize, String, DigitGroups)>
     x
 }
 
-fn all_slopes(xs: Vec<f64>, ys: Vec<f64>) -> Vec<f64> {
+fn mk(xs: Vec<f64>, ys: Vec<f64>) -> (f64, f64) {
     assert!(xs.len() == ys.len());
     let n = xs.len();
     let mut xsd_triu = Vec::new();
@@ -88,13 +88,17 @@ fn all_slopes(xs: Vec<f64>, ys: Vec<f64>) -> Vec<f64> {
     };
 
     let s: f64 = std::iter::zip(xsd_triu.iter(), ysd_triu.iter())
-        .map(|(x, y)|
-             (x * y).signum())
-        .sum();
+        .map(|(x, y)| {
+             let v = x * y;
+             if v == 0. { 0. }
+             else if v > 0. { 1.}
+             else if v < 0. { -1. }
+             else { unreachable!() }
+        }).sum();
 
     // group ys by value
     let mut ycs = std::collections::HashMap::<BitHashedF64, usize>::new();
-    for y in ys { *ycs.entry(BitHashedF64{0: 0.}).or_insert(0) += 1; }
+    for y in ys { *ycs.entry(BitHashedF64{0: y}).or_insert(0) += 1; }
 
     // extract sizes of groups of same-valued ys larger than 1
     let ties = ycs.into_iter()
@@ -127,9 +131,62 @@ fn all_slopes(xs: Vec<f64>, ys: Vec<f64>) -> Vec<f64> {
     use statrs::distribution::ContinuousCDF;
     let p = 2.*(1.-standard_normal.cdf(z.abs()));
 
-    vec![]
+    (p, 1.0)
 }
 
+fn mean(vs: &Vec<f64>) -> f64 {
+    vs.iter().sum::<f64>() / vs.len() as f64
+}
+
+fn linreg(xs: Vec<f64>, ys: Vec<f64>) -> (f64, f64) {
+    assert!(xs.len() == ys.len());
+    let n = xs.len();
+    assert!(n >= 2);
+
+    let meany = mean(&ys);
+    let meanx = mean(&xs);
+
+    let btop = std::iter::zip(xs.iter(), ys.iter())
+        .map(|(x, y)| (y - meany)*(x - meanx))
+        .sum::<f64>();
+    let bbot = xs.iter()
+        .map(|x| (x - meanx) * (x - meanx))
+        .sum::<f64>();
+    let b = btop / bbot;
+
+    let a = meany - b*meanx;
+
+    let evaluated = xs.iter()
+        .map(|x| b*x + a)
+        .collect::<Vec<f64>>();
+    let residuals = std::iter::zip(evaluated.iter(), ys.iter())
+        .map(|(e, y)| e - y)
+        .collect::<Vec<f64>>();
+
+    let p = if n == 2 {
+        0.
+    } else {
+        let var = residuals.iter()
+            .map(|r| r*r)
+            .sum::<f64>()
+            /
+            (n - 2) as f64;
+        let rad = var /
+            xs.iter()
+            .map(|x| (x - meanx)*(x - meanx))
+            .sum::<f64>();
+
+        if rad <= 0. {
+            1.
+        } else {
+            let t = b / rad.sqrt();
+            let tdist = statrs::distribution::StudentsT::new(0., 1., (n - 2) as f64).unwrap();
+            use statrs::distribution::ContinuousCDF;
+            2. * (1. - tdist.cdf(t.abs()))
+        }
+    };
+    (p, b)
+}
 
 struct BitHashedF64 (f64);
 impl std::hash::Hash for BitHashedF64 {
@@ -151,6 +208,19 @@ mod tests {
         assert!(cmp_numeric(&vec![1], &vec![2]).is_lt());
         assert!(cmp_numeric(&vec![2], &vec![11]).is_lt());
         assert!(cmp_numeric(&vec![0,0,2], &vec![11]).is_lt());
+    }
+
+    #[test]
+    fn test_linreg() {
+        assert_eq!(linreg(vec![0.,1.,2.,3.,4.], vec![0., 2., 4., 6., 8.]), (0.0, 1.0));
+        assert_eq!(linreg(vec![0.,1.,2.,3.,4.], vec![1., 2., 3., 4., 5.]), (0.0, 1.0));
+        assert_eq!(linreg(vec![0.,1.,2.,3.,4.], vec![1., 1., 1., 1., 1.]), (0.0, 1.0));
+    }
+
+    #[test]
+    fn test_mk() {
+        assert_eq!(mk(vec![0.,1.,2.,3.,4.], vec![1., 1., 1., 1., 1.]), (0.0, 1.0));
+        assert_eq!(mk(vec![0.,1.,2.,3.,4.], vec![1., 2., 3., 4., 5.]), (0.0, 1.0));
     }
 }
 
