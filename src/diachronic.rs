@@ -131,7 +131,7 @@ fn mk(xs: Vec<f64>, ys: Vec<f64>) -> (f64, f64) {
     use statrs::distribution::ContinuousCDF;
     let p = 2.*(1.-standard_normal.cdf(z.abs()));
 
-    (p, 1.0)
+    (p, median_slope)
 }
 
 fn mean(vs: &Vec<f64>) -> f64 {
@@ -212,15 +212,16 @@ mod tests {
 
     #[test]
     fn test_linreg() {
-        assert_eq!(linreg(vec![0.,1.,2.,3.,4.], vec![0., 2., 4., 6., 8.]), (0.0, 1.0));
-        assert_eq!(linreg(vec![0.,1.,2.,3.,4.], vec![1., 2., 3., 4., 5.]), (0.0, 1.0));
-        assert_eq!(linreg(vec![0.,1.,2.,3.,4.], vec![1., 1., 1., 1., 1.]), (0.0, 1.0));
+        assert_eq!(linreg(vec![0.,1.,2.,3.,4.], vec![0., 2., 4., 6., 8.]), (1.0, 2.0));
+        assert_eq!(linreg(vec![0.,1.,2.,3.,4.], vec![1., 2., 3., 4., 5.]), (1.0, 1.0));
+        assert_eq!(linreg(vec![0.,1.,2.,3.,4.], vec![1., 1., 1., 1., 1.]), (1.0, 0.0));
     }
 
     #[test]
     fn test_mk() {
-        assert_eq!(mk(vec![0.,1.,2.,3.,4.], vec![1., 1., 1., 1., 1.]), (0.0, 1.0));
-        assert_eq!(mk(vec![0.,1.,2.,3.,4.], vec![1., 2., 3., 4., 5.]), (0.0, 1.0));
+        assert_eq!(mk(vec![0.,1.,2.,3.,4.], vec![1., 1., 1., 1., 1.]), (1.0, 0.0));
+        assert_eq!(mk(vec![0.,1.,2.,3.,4.], vec![1., 2., 3., 4., 5.]), (0.027486336110310372, 1.0));
+        assert_eq!(mk(vec![0.,1.,2.,3.,4.], vec![0., 2., 4., 6., 8.]), (0.027486336110310372, 2.0));
     }
 }
 
