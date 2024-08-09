@@ -1,16 +1,7 @@
 #![allow(dead_code)]
 #![allow(unused)]
 
-//
-//
-//fn create_tag_ordering(keys: Vec<&str>) -> Vec<(String, Vec<KT>)> {
-
-//}
-
-// re.split(r'\D+')
-
-type DigitGroup = Vec<u32>;
-type DigitGroups = Vec<DigitGroup>;
+type DigitGroups = Vec<usize>;
 
 fn digit_groups(s: &str) -> DigitGroups {
     s.chars().collect::<Vec<_>>()
@@ -18,7 +9,8 @@ fn digit_groups(s: &str) -> DigitGroups {
         .map(|numseq| numseq.iter()
              .map(|d| d.to_digit(10).unwrap())
              .skip_while(|&d| d == 0)
-             .collect())
+             .fold(0usize, |accum, digit| accum * 10 + digit as usize)
+             )
         .collect()
 }
 
@@ -39,6 +31,7 @@ fn cmp_keys(a: &DigitGroups, b: &DigitGroups) -> std::cmp::Ordering {
     }
 }
 
+/*
 fn cmp_numeric(a: &DigitGroup, b: &DigitGroup) -> std::cmp::Ordering {
     let ia = a.iter().skip_while(|&&d| d == 0);
     let ib = b.iter().skip_while(|&&d| d == 0);
@@ -52,23 +45,26 @@ fn cmp_numeric(a: &DigitGroup, b: &DigitGroup) -> std::cmp::Ordering {
     }
     std::cmp::Ordering::Equal
 }
+*/
 
-fn create_tag_ordering(keys: Vec<&str>) -> Vec<(usize, String, DigitGroups)>
+pub fn tag_ordering<'a>(keys: &'a Vec<&'a str>) -> Vec<(usize, &'a str, DigitGroups)>
 {
     let mut x = keys.iter()
         .enumerate()
         .map(|(i, s)| 
-             (i, s.to_string(), digit_groups(s)))
+             (i, *s, digit_groups(s)))
         .collect::<Vec<_>>();
     x.sort_by(|(_, _, k1), (_, _, k2)| cmp_keys(k1, k2));
     x
 }
 
-fn mk(xs: Vec<f64>, ys: Vec<f64>) -> (f64, f64) {
+/// calculate the Theil-Sen and Mann-Kendall statistics
+pub fn mk(xs: &[f64], ys: &[f64]) -> (f64, f64) {
     assert!(xs.len() == ys.len());
     let n = xs.len();
-    let mut xsd_triu = Vec::new();
-    let mut ysd_triu = Vec::new();
+    let triulen = (n*(n+1))/2;
+    let mut xsd_triu = Vec::<f64>::with_capacity(triulen);
+    let mut ysd_triu = Vec::<f64>::with_capacity(triulen);
     for i in 0..n {
         for j in 0..i {
             xsd_triu.push(xs[i]-xs[j]);
@@ -79,26 +75,41 @@ fn mk(xs: Vec<f64>, ys: Vec<f64>) -> (f64, f64) {
     let mut slopes = std::iter::zip(ysd_triu.iter(), xsd_triu.iter())
         .map(|(x, y)| x / y)
         .collect::<Vec<_>>();
+    /*
+    let mut slopes = vec![0f64; (n*(n+1))/2];
+    for i in 0..ysd_triu.len() {
+        let x = xsd_triu[i];
+        let y = ysd_triu[i];
+        let slope = y / x;
+        slopes[i] = slope;
+    }*/
 
+    /*
     slopes.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let median_slope = match slopes.len() % 2 {
         1 => slopes[slopes.len() / 2] + slopes[slopes.len() / 2 + 1] / 2.,
         0 => slopes[slopes.len() / 2],
         _ => unreachable!(),
     };
+    */
+    use medians::Medianf64;
+    let median_slope = slopes.as_slice().medf_checked().unwrap();
 
     let s: f64 = std::iter::zip(xsd_triu.iter(), ysd_triu.iter())
         .map(|(x, y)| {
-             let v = x * y;
-             if v == 0. { 0. }
-             else if v > 0. { 1.}
-             else if v < 0. { -1. }
-             else { unreachable!() }
-        }).sum();
+            let v = x * y;
+            if v == 0. { 0. } else { v.signum() }
+        }
+        //     let v = x * y;
+        //     if v == 0. { 0. }
+        //     else if v > 0. { 1.}
+        //     else if v < 0. { -1. }
+        //     else { unreachable!() }
+        ).sum();
 
     // group ys by value
     let mut ycs = std::collections::HashMap::<BitHashedF64, usize>::new();
-    for y in ys { *ycs.entry(BitHashedF64{0: y}).or_insert(0) += 1; }
+    for y in ys { *ycs.entry(BitHashedF64{0: *y}).or_insert(0) += 1; }
 
     // extract sizes of groups of same-valued ys larger than 1
     let ties = ycs.into_iter()
@@ -134,11 +145,10 @@ fn mk(xs: Vec<f64>, ys: Vec<f64>) -> (f64, f64) {
     (p, median_slope)
 }
 
-fn mean(vs: &Vec<f64>) -> f64 {
-    vs.iter().sum::<f64>() / vs.len() as f64
-}
+fn mean(vs: &[f64]) -> f64 { vs.iter().sum::<f64>() / vs.len() as f64 }
 
-fn linreg(xs: Vec<f64>, ys: Vec<f64>) -> (f64, f64) {
+/// Calculate the Simple Linear Regression p-value and slope
+pub fn linreg(xs: &[f64], ys: &[f64]) -> (f64, f64) {
     assert!(xs.len() == ys.len());
     let n = xs.len();
     assert!(n >= 2);
@@ -203,25 +213,37 @@ impl std::cmp::Eq for BitHashedF64 {}
 #[cfg(test)]
 mod tests {
     use crate::diachronic::*;
-    #[test]
+    /*#[test]
     fn test_cmp_numeric() {
         assert!(cmp_numeric(&vec![1], &vec![2]).is_lt());
         assert!(cmp_numeric(&vec![2], &vec![11]).is_lt());
         assert!(cmp_numeric(&vec![0,0,2], &vec![11]).is_lt());
-    }
+    }*/
 
     #[test]
     fn test_linreg() {
-        assert_eq!(linreg(vec![0.,1.,2.,3.,4.], vec![0., 2., 4., 6., 8.]), (1.0, 2.0));
-        assert_eq!(linreg(vec![0.,1.,2.,3.,4.], vec![1., 2., 3., 4., 5.]), (1.0, 1.0));
-        assert_eq!(linreg(vec![0.,1.,2.,3.,4.], vec![1., 1., 1., 1., 1.]), (1.0, 0.0));
+        assert_eq!(linreg(&[0.,1.,2.,3.,4.], &[0., 2., 4., 6., 8.]), (1.0, 2.0));
+        assert_eq!(linreg(&[0.,1.,2.,3.,4.], &[1., 2., 3., 4., 5.]), (1.0, 1.0));
+        assert_eq!(linreg(&[0.,1.,2.,3.,4.], &[1., 1., 1., 1., 1.]), (1.0, 0.0));
     }
 
     #[test]
     fn test_mk() {
-        assert_eq!(mk(vec![0.,1.,2.,3.,4.], vec![1., 1., 1., 1., 1.]), (1.0, 0.0));
-        assert_eq!(mk(vec![0.,1.,2.,3.,4.], vec![1., 2., 3., 4., 5.]), (0.027486336110310372, 1.0));
-        assert_eq!(mk(vec![0.,1.,2.,3.,4.], vec![0., 2., 4., 6., 8.]), (0.027486336110310372, 2.0));
+        assert_eq!(mk(&[0.,1.,2.,3.,4.], &[1., 1., 1., 1., 1.]), (1.0, 0.0));
+        assert_eq!(mk(&[0.,1.,2.,3.,4.], &[1., 2., 3., 4., 5.]), (0.027486336110310372, 1.0));
+        assert_eq!(mk(&[0.,1.,2.,3.,4.], &[0., 2., 4., 6., 8.]), (0.027486336110310372, 2.0));
+    }
+
+    #[test]
+    fn test_tag_ordering() {
+        let tags = vec!["2020-008", "2022-01", "2019", "1982-04-02", "2018-02"];
+        let ord = tag_ordering(&tags);
+        assert_eq!(ord,
+            [(3, "1982-04-02", vec![1982, 4, 2]),
+             (4, "2018-02",    vec![2018, 2]),
+             (2, "2019",       vec![2019]),
+             (0, "2020-008",   vec![2020, 8]),
+             (1, "2022-01",    vec![2022, 1])]);
     }
 }
 

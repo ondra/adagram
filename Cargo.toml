@@ -22,4 +22,5 @@ rayon = "1.7.0"
 statrs = "0.16.0"
 simple_logger = { version = "4.2.0", features = ["threads"] }
 log = "0.4.20"
+medians = "3.0.12"
 #hogwild = "0.6.1"
