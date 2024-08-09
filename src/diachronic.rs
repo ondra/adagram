@@ -63,49 +63,20 @@ pub fn mk(xs: &[f64], ys: &[f64]) -> (f64, f64) {
     assert!(xs.len() == ys.len());
     let n = xs.len();
     let triulen = (n*(n+1))/2;
-    let mut xsd_triu = Vec::<f64>::with_capacity(triulen);
-    let mut ysd_triu = Vec::<f64>::with_capacity(triulen);
+    let mut slopes = Vec::<f64>::with_capacity(triulen);
+    let mut s = 0f64;
     for i in 0..n {
         for j in 0..i {
-            xsd_triu.push(xs[i]-xs[j]);
-            ysd_triu.push(ys[i]-ys[j]);
+            let x = xs[i] - xs[j];
+            let y = ys[i] - ys[j];
+            slopes.push(y / x);
+            let v = x * y;
+            if v != 0. { s += v.signum(); }
         }
     }
 
-    let mut slopes = std::iter::zip(ysd_triu.iter(), xsd_triu.iter())
-        .map(|(x, y)| x / y)
-        .collect::<Vec<_>>();
-    /*
-    let mut slopes = vec![0f64; (n*(n+1))/2];
-    for i in 0..ysd_triu.len() {
-        let x = xsd_triu[i];
-        let y = ysd_triu[i];
-        let slope = y / x;
-        slopes[i] = slope;
-    }*/
-
-    /*
-    slopes.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let median_slope = match slopes.len() % 2 {
-        1 => slopes[slopes.len() / 2] + slopes[slopes.len() / 2 + 1] / 2.,
-        0 => slopes[slopes.len() / 2],
-        _ => unreachable!(),
-    };
-    */
     use medians::Medianf64;
     let median_slope = slopes.as_slice().medf_checked().unwrap();
-
-    let s: f64 = std::iter::zip(xsd_triu.iter(), ysd_triu.iter())
-        .map(|(x, y)| {
-            let v = x * y;
-            if v == 0. { 0. } else { v.signum() }
-        }
-        //     let v = x * y;
-        //     if v == 0. { 0. }
-        //     else if v > 0. { 1.}
-        //     else if v < 0. { -1. }
-        //     else { unreachable!() }
-        ).sum();
 
     // group ys by value
     let mut ycs = std::collections::HashMap::<BitHashedF64, usize>::new();
