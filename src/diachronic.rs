@@ -75,8 +75,13 @@ pub fn mk(xs: &[f64], ys: &[f64]) -> (f64, f64) {
         }
     }
 
-    use medians::Medianf64;
-    let median_slope = slopes.as_slice().medf_checked().unwrap();
+    let l = slopes.len();
+    let median_slope = if l % 2 == 0 {
+        (*order_stat::kth_by(&mut slopes, l / 2 - 1, |u, v| u.partial_cmp(v).unwrap()) +
+        *order_stat::kth_by(&mut slopes, l / 2, |u, v| u.partial_cmp(v).unwrap())) / 2.
+    } else {
+        *order_stat::kth_by(&mut slopes, l / 2, |u, v| u.partial_cmp(v).unwrap())
+    };
 
     // group ys by value
     let mut ycs = std::collections::HashMap::<BitHashedF64, usize>::new();
@@ -160,7 +165,9 @@ pub fn linreg(xs: &[f64], ys: &[f64]) -> (f64, f64) {
         if rad <= 0. {
             1.
         } else {
-            let t = b / rad.sqrt();
+            let rads = rad.sqrt();
+            let t = if rads >= 0. { b / rads }
+                else { 1000. };
             let tdist = statrs::distribution::StudentsT::new(0., 1., (n - 2) as f64).unwrap();
             use statrs::distribution::ContinuousCDF;
             2. * (1. - tdist.cdf(t.abs()))
