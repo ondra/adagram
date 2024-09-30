@@ -5,7 +5,7 @@ use adagram::diachronic::*;
 
 const VERSION: &str = git_version::git_version!(args=["--tags","--always", "--dirty"]);
 
-/// Assign Word Sketches to senses
+/// Calculate diachronic trend for all words in a corpus
 #[derive(Parser, Debug)]
 #[clap(author, version=VERSION, about)]
 struct Args {
