@@ -72,7 +72,7 @@ struct Args {
     #[clap(long,default_value_t=1e-3)]
     save_threshold: f64,
 
-    /// minimal probability of a meaning to save after training
+    /// initial learning rate
     #[clap(long,default_value_t=0.025)]
     start_lr: f64,
 
