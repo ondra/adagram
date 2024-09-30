@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     let tmpoutpath = args.outpath.to_string() + ".tmp";
-    let mut outfile = std::fs::File::create(&args.outpath)?;
+    let mut outfile = std::fs::File::create(&tmpoutpath)?;
 
     let corp = corp::corp::Corpus::open(&args.corpname)?;
     let attr: Box<dyn corp::corp::Attr> = corp.open_attribute(&args.attrname)?;
