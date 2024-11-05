@@ -36,7 +36,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let trainfunc = | thread_id: usize, | -> std::collections::HashMap<Vec<u32> ,u64> {
         let mut words_read_last = 0;
-        let mut local_words_read = 0;
         let mut reporttime = std::time::Instant::now();
 
         let startpos = thread_id * total_words / args.threads;
@@ -50,24 +49,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|attr| attr.iter_ids(startpos as u64).take(endpos - 1))
             .collect::<Vec<_>>();
         for pos in 0..partsize {
-            let local_words_read = words_read.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if thread_id == 0 && pos & 0xfff == 0{
-                let dur = reporttime.elapsed().as_secs_f64();
-                if dur > 0.5 {
-                    let rws = local_words_read - words_read_last;
-                    words_read_last = local_words_read;
-                    let wps = rws as f64 / dur;
-                    let remaining_words = total_words - local_words_read;
-                    let remaining_secs = if wps != 0.0 { remaining_words / wps as usize } else { 0 };
-                    let remaining_hours = remaining_secs / 3600;
-                    let remaining_mins = (remaining_secs % 3600) / 60;
-                    reporttime = std::time::Instant::now();
-                    let elapsed = reporttime.checked_duration_since(starttime).map(|d| d.as_secs()).unwrap_or(0);
-                    eprint!("\r[{}] visited {} positions out of {} ({:.2} %), {:.0} wps, {:02}h:{:02}m remaining", elapsed,
-                        local_words_read, total_words, local_words_read as f64 / total_words as f64 * 100.0,
-                        wps, remaining_hours, remaining_mins,
-                    );
-               }
+            if pos & 0xffff == 0xffff {
+                let local_words_read = words_read.fetch_add(0xffff, std::sync::atomic::Ordering::Relaxed);
+                if thread_id == 0 {
+                    let dur = reporttime.elapsed().as_secs_f64();
+                    if dur > 0.5 {
+                        let rws = local_words_read - words_read_last;
+                        words_read_last = local_words_read;
+                        let wps = rws as f64 / dur;
+                        let remaining_words = total_words - local_words_read;
+                        let remaining_secs = if wps != 0.0 { remaining_words / wps as usize } else { 0 };
+                        let remaining_hours = remaining_secs / 3600;
+                        let remaining_mins = (remaining_secs % 3600) / 60;
+                        reporttime = std::time::Instant::now();
+                        let elapsed = reporttime.checked_duration_since(starttime).map(|d| d.as_secs()).unwrap_or(0);
+                        eprintln!("\r[{}] visited {} positions out of {} ({:.2} %), {:.0} wps, {:02}h:{:02}m remaining", elapsed,
+                            local_words_read, total_words, local_words_read as f64 / total_words as f64 * 100.0,
+                            wps, remaining_hours, remaining_mins,
+                        );
+                    }
+                }
             }
              
             let out = its.iter_mut().map(|it| it.next().unwrap_or(0)).collect::<Vec<u32>>();
@@ -75,8 +76,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         hm
     };
-
-    eprintln!("starting workers");
 
     let res = if args.threads > 1 {
         let hms = std::thread::scope(|scope| {
@@ -90,12 +89,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
 
-            eprintln!("workers started");
-
             handles.into_iter()
                 .map(|handle| handle.join().unwrap())
                 .collect::<Vec<_>>()
         });
+        eprintln!("corpus positions visited, collecting output");
         let mut ohm = std::collections::HashMap::<Vec<u32>, u64>::new();
         for hm in hms {
             for (key, value) in hm {
@@ -107,6 +105,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         trainfunc(0)
     };
 
+    eprintln!("read {} words, {} wps",
+              total_words, 
+              total_words as f32 / starttime.elapsed().as_secs() as f32);
+
     for (key, value) in res {
         for (attr, k) in std::iter::zip(attrs.iter(), key) {
             print!("{}\t", attr.id2str(k));
@@ -114,12 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", value);
     }
 
-    let local_words_read = words_read.load(std::sync::atomic::Ordering::Relaxed);
-    // let local_words_read = local_words_read - args.threads;
-    eprintln!("FINISHED: read {} words, {} wps",
-              local_words_read, 
-              local_words_read as f32 / starttime.elapsed().as_secs() as f32);
-
+    eprintln!("done");
     Ok(())
 }
 
