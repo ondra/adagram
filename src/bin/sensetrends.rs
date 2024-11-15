@@ -227,24 +227,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             exp_normalize(&mut z);
-            for (i, zk) in z.iter().enumerate() {
-                zst[i].push(*zk);
-            }
+            //for (i, zk) in z.iter().enumerate() {
+            //    zst[i].push(*zk);
 
-            let maxsense = 0usize;
-            sense_diacnts[epoch_no as usize*nmeanings + maxsense] += 1;
+            let maxsense: Option<usize> = z.iter()
+                .enumerate()
+                .max_by(|(_, a),(_, b)| a.total_cmp(b))
+                .map(|(i, _)| i);
+            sense_diacnts[maxsense.unwrap()*epochcnt + epoch_no as usize] += 1;
         }
 
         let freqs = (0..epochcnt)
             .map(|epoch|
-                (0..nmeanings).map(|sense| sense_diacnts[epoch*nmeanings + sense]).sum()
+                (0..nmeanings).map(|sense| sense_diacnts[sense*epochcnt + epoch]).sum()
             ).collect::<Vec<u64>>();
 
         println!("HW {}", head);
         for sense in 0..nmeanings as usize {
             print!("s##{}", sense);
             for epoch in 0..epochcnt {
-                print!("\t{}", sense_diacnts[epoch*nmeanings + sense]);
+                print!("\t{}", sense_diacnts[sense*epochcnt + epoch]);
             }
             println!();
         }
