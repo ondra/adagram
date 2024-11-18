@@ -40,11 +40,6 @@ struct Args {
     /// minimum norm for a structure attribute value to be considered
     #[clap(long,default_value_t=0.15)]
     epoch_limit: f64,
-
-    /// prefix to which to write the output files
-    #[clap(long)]
-    trendbase: String,
-
 }
 
 use std::time::{Instant,Duration};
@@ -60,11 +55,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let diastructname = diaattrparts.next().ok_or("")?;
     let diastructattr = corpus.open_attribute(&args.diaattr)?;
     let diastruct = corpus.open_struct(diastructname)?;
-
-    let trendbase = if args.trendbase == "" {
-        corpus.path + "/" + &args.diaattr + "." + &args.posattr
-    } else { args.trendbase };
-    eprintln!("writing output to {}", trendbase);
 
     let (diamap, new_norms) = map_diavals(diastructattr.as_ref(), args.epoch_limit)?;
 
