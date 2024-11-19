@@ -19,6 +19,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::File::create(&tgtmodelpath)?);
     let mut dicf = std::io::BufWriter::new(
         std::fs::File::create(tgtmodelpath.to_string() + ".dic")?);
+    let mut cntf = std::io::BufWriter::new(
+        std::fs::File::create(tgtmodelpath.to_string() + ".cnt")?);
 
     eprintln!("loading {}", srcmodelpath);
     let (mut vm, id2str) = VectorModel::load_model(&srcmodelpath)?;
@@ -38,11 +40,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let kk = vm.in_vecs.len_of(Axis(2));
     let mut indices = Vec::new();
     let mut z = Array::<f64, Ix1>::zeros(jj);
+    let mut zs = std::collections::HashMap::<(u32, u32), f64>::new();
     for i in 0..ii {
         let _nsenses = expected_pi(&vm.counts, vm.alpha, i as u32, &mut z, 1e-3f64);
         for j in 0..jj {
             if z[j] < min_prob { continue; }
             indices.push((i, j)); 
+            zs.insert((i as u32, j as u32), z[j]);
         }
     }
     indices.sort_by_key(|&(i, j)| (vm.counts[[i, j]]) as usize);
@@ -51,15 +55,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("writing {}", tgtmodelpath);
     writeln!(dicf, "{}", indices.len())?;
     writeln!(dicf, "{}", kk)?;
+    writeln!(cntf, "{}", "word\tprob\tfrq")?;
     for (i, j) in indices {
         writeln!(dicf, "{}##{}", id2str[i], j)?;
         for e in vm.in_vecs.slice(s![i, j, ..]).iter() {
             bvecf.write_all(&e.to_le_bytes())?;
         }
+        writeln!(cntf, "{}##{}\t{}\t{}", id2str[i], j, zs.get(&(i as u32, j as u32)).unwrap(), vm.counts[[i, j]])?;
     }
 
     bvecf.flush()?;
     dicf.flush()?;
+    cntf.flush()?;
 
     eprintln!("done");
     Ok(())
