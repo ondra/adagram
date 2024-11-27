@@ -245,6 +245,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             print!("\t{}", freqs[epoch]);
         }
         println!();
+        print!("n");
+        for epoch in 0..epochcnt {
+            print!("\t{}", new_norms[epoch]);
+        }
+        println!();
 
         /*
         let mut sum_normed = 0.0f64;
