@@ -213,6 +213,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let starttime = std::time::Instant::now();
         let mut total_ll1 = 0.0f64;
         let mut total_ll2 = 0.0f64;
+        let mut local_words_read = 0;
 
         for rawdoc in dociterm(doc.as_ref(), attr.as_ref(), &oid_to_nid, startdoc) {
             let doc = preprocess(&rawdoc, freqs.as_slice().unwrap(),
@@ -222,38 +223,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut out_mut = out_vecs.as_mut().view_mut();
             let mut counts_mut = counts.as_mut().view_mut();
 
+            let lr1 = f64::max(
+                args.start_lr * (1. - local_words_read as f64 / (total_words as f64+1.)),
+                args.start_lr * 1e-4);
+            let lr2 = lr1;
+
+            if thread_id == 0 {
+                let dur = reporttime.elapsed().as_secs_f64();
+                if dur > 1.0 {
+                    let rws = local_words_read - words_read_last;
+                    words_read_last = local_words_read;
+                    let wps = rws as f64 / dur;
+                    let remaining_words = total_words - local_words_read;
+                    let remaining_secs = if wps != 0.0 { remaining_words / wps as usize } else { 0 };
+                    let remaining_hours = remaining_secs / 3600;
+                    let remaining_mins = (remaining_secs % 3600) / 60;
+                    reporttime = std::time::Instant::now();
+                    let elapsed = reporttime.checked_duration_since(starttime).map(|d| d.as_secs()).unwrap_or(0);
+                    eprint!("\r[{}] visited {} positions out of {} ({:.2} %), {:.0} wps, {:02}h:{:02}m remaining, lr {:.5} ll {:.7}", elapsed,
+                              local_words_read, total_words, local_words_read as f64 / total_words as f64 * 100.0,
+                              wps, remaining_hours, remaining_mins, lr1, total_ll1,
+                              // senses as f32 / local_words_read as f32);
+                              );
+                }
+            }
+
             for i in 0..doc.len() {
-                let local_words_read = words_read.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-                let lr1 = f64::max(
-                    args.start_lr * (1. - local_words_read as f64 / (total_words as f64+1.)),
-                    args.start_lr * 1e-4);
-                let lr2 = lr1;
-
-                if thread_id == 0 {
-                    let dur = reporttime.elapsed().as_secs_f64();
-                    if dur > 0.5 {
-                        let rws = local_words_read - words_read_last;
-                        words_read_last = local_words_read;
-                        let wps = rws as f64 / dur;
-                        let remaining_words = total_words - local_words_read;
-                        let remaining_secs = if wps != 0.0 { remaining_words / wps as usize } else { 0 };
-                        let remaining_hours = remaining_secs / 3600;
-                        let remaining_mins = (remaining_secs % 3600) / 60;
-                        reporttime = std::time::Instant::now();
-                        let elapsed = reporttime.checked_duration_since(starttime).map(|d| d.as_secs()).unwrap_or(0);
-                        eprint!("\r[{}] visited {} positions out of {} ({:.2} %), {:.0} wps, {:02}h:{:02}m remaining, lr {:.5} ll {:.7}", elapsed,
-                                  local_words_read, total_words, local_words_read as f64 / total_words as f64 * 100.0,
-                                  wps, remaining_hours, remaining_mins, lr1, total_ll1,
-                                  // senses as f32 / local_words_read as f32);
-                                  );
-                    }
-                }
-
-                if local_words_read >= total_words {
-                    return;
-                }
-
                 let x = doc[i];
 
                 // random reduce ... TODO
@@ -285,6 +280,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 var_update_counts(&freqs, &mut counts_mut, x, &z, lr2);
 
+            }
+            local_words_read = words_read.fetch_add(doc.len(), std::sync::atomic::Ordering::Relaxed);
+            if local_words_read >= total_words {
+                return;
             }
         }
     };
