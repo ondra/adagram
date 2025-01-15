@@ -47,9 +47,13 @@ struct Args {
     #[clap(long, default_value_t=true)]
     print_status: bool,
 
-    /// minimum probability for a sense to be taken into consideration
+    /// minimum apriori probability for a sense to be taken into consideration
     #[clap(long, default_value_t=1e-3f64)]
     min_prob: f64,
+
+    /// use uniform prior probabilities for senses
+    #[clap(long, default_value_t=false)]
+    uniform_prob: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -154,9 +158,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let n_senses = expected_pi(&vm.counts, vm.alpha, x, &mut z, args.min_prob);
 
-        for zk in z.iter_mut() {
-            if *zk < args.min_prob { *zk = 0.; }
-            *zk = zk.ln();  // ???
+        if args.uniform_prob {
+            for zk in z.iter_mut() {
+                if *zk < args.min_prob { *zk = 0.; }
+                else { *zk = 1. / n_senses as f64; }
+            }
+        } else {
+            for zk in z.iter_mut() {
+                if *zk < args.min_prob { *zk = 0.; }
+                *zk = zk.ln();  // ???
+            }
         }
 
         let mut nvalid = 0;
