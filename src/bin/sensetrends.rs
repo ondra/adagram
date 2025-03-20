@@ -7,6 +7,7 @@ use adagram::adagram::*;
 use adagram::common::*;
 use adagram::runningstats::RunningStats;
 
+use rayon::prelude::*;
 
 const VERSION: &str = git_version::git_version!(args=["--tags","--always", "--dirty"]);
 
@@ -40,6 +41,10 @@ struct Args {
     /// minimum norm for a structure attribute value to be considered
     #[clap(long,default_value_t=0.15)]
     epoch_limit: f64,
+
+    /// use uniform prior probabilities for senses
+    #[clap(long, default_value_t=false)]
+    uniform_prob: bool,
 }
 
 use std::time::{Instant,Duration};
@@ -47,6 +52,7 @@ use std::time::{Instant,Duration};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let corpus = corp::corp::Corpus::open(&args.corpname)?;
+    rayon::ThreadPoolBuilder::new().num_threads(32).build_global().unwrap();
 
     eprintln!("opening attribute {}", &args.posattr);
     let posattr = corpus.open_attribute(&args.posattr)?;
@@ -78,6 +84,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     assert!(corpid2id.len() == posattr.id_range() as usize);
+
+    let fmap_ids = |corpid: &u32| {
+        match corpid2id[*corpid as usize] {
+            u32::MAX => None,
+            id => Some(id),
+        }
+    };
+
     let mut z = Array::<f64, Ix1>::zeros(vm.nmeanings());
     let mut zst = vec![];
     for _ in 0..vm.nmeanings() {
@@ -85,9 +99,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let ntokens = 2*args.window;
-    let mut lctx = Vec::<u32>::with_capacity(ntokens);
-    let mut rctx = Vec::<u32>::with_capacity(ntokens);
-
 
     // diachronic init
     let h = posattr.id_range() as usize;
@@ -123,11 +134,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     */
 
     let nmeanings = vm.nmeanings() as usize;
-    let mut sense_diacnts = vec![0u64; nmeanings * epochcnt];
+                    use std::sync::{Arc, Mutex};
+    let sense_diacnts = Arc::new(Mutex::new(vec![0u64; nmeanings * epochcnt]));
 
     eprintln!("ready");
     for line in std::io::stdin().lines() {
-        sense_diacnts.iter_mut().for_each(|v| *v = 0);
+        {
+            let mut sense_diacnts = sense_diacnts.lock().unwrap();
+            sense_diacnts.iter_mut().for_each(|v| *v = 0);
+        }
         let unwrapped = line?;
         let head = unwrapped.trim();
 
@@ -141,13 +156,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         };
 
-        let n_senses = expected_pi(&vm.counts, vm.alpha, x, &mut z, args.sense_threshold);
         let head_mid = x;
-
-        for zk in z.iter_mut() {
-            if *zk < args.sense_threshold { *zk = 0.; }
-            *zk = zk.ln();
-        }
 
         let mut nvalid = 0;
         let mut ninvalid = 0;
@@ -160,19 +169,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         let poss = posattr.revidx().id2poss(corpid);
-        for pos in poss {
+        let pit = poss.par_bridge().map_init(
+            || {
+                let mut z = Array::<f64, Ix1>::zeros(vm.nmeanings());
+                let mut lctx = Vec::with_capacity(ntokens);
+                let mut rctx = Vec::with_capacity(ntokens);
+                (z, lctx, rctx)
+            },
+            |(ref mut z, ref mut lctx, ref mut rctx), pos|{
             let structpos = if let Some(structpos) = diastruct.num_at_pos(pos) {
                 structpos
             } else {
                 eprintln!("WARN: position {} for id {} is outside structure", pos, corpid);
-                continue
+                return None;
             };
+
+            let n_senses = expected_pi(&vm.counts, vm.alpha, x, z, args.sense_threshold);
+
+            if args.uniform_prob {
+                for zk in z.iter_mut() {
+                    if *zk < args.sense_threshold { *zk = 0.; }
+                    else { *zk = 1. / n_senses as f64; }
+                }
+            } else {
+                for zk in z.iter_mut() {
+                    if *zk < args.sense_threshold { *zk = 0.; }
+                    *zk = zk.ln();
+                }
+            }
 
             let diaid = diastructattr.text().get(structpos);
 
             let epoch_no = diamap[diaid as usize];
             if epoch_no == u32::MAX {
-                continue;
+                return None;
             }
 
             //eprintln!("{}", pos);
@@ -183,8 +213,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             //}
             let start = if pos >= ntokens as u64 { pos - ntokens as u64 } else { 0 };
             let ctxit = posattr.iter_ids(start);
-            lctx.clear(); rctx.clear();
 
+            lctx.clear(); rctx.clear();
             for (ctxpos, ctx_cid) in std::iter::zip(start.., ctxit) {
                 if ctxpos == pos { continue; }
                 if ctxpos > pos + ntokens as u64 {
@@ -197,26 +227,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let fmap_ids = |corpid: &u32| {
-                match corpid2id[*corpid as usize] {
-                    u32::MAX => None,
-                    id => Some(id),
-                }
-            };
-
             for ctx_mid in lctx.iter()
                     .rev().filter_map(fmap_ids).take(args.window) {
                 var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path,
-                    head_mid, ctx_mid, &mut z);
+                    head_mid, ctx_mid, z);
             }
 
             for ctx_mid in rctx.iter()
                     .filter_map(fmap_ids).take(args.window) {
                 var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path,
-                    head_mid, ctx_mid, &mut z);
+                    head_mid, ctx_mid, z);
             }
 
-            exp_normalize(&mut z);
+            exp_normalize(z);
             //for (i, zk) in z.iter().enumerate() {
             //    zst[i].push(*zk);
 
@@ -224,8 +247,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .enumerate()
                 .max_by(|(_, a),(_, b)| a.total_cmp(b))
                 .map(|(i, _)| i);
-            sense_diacnts[maxsense.unwrap()*epochcnt + epoch_no as usize] += 1;
-        }
+            Some((maxsense.unwrap(), epoch_no))
+        }).flatten();
+        pit.for_each(|(maxsense, epoch_no)|{
+            let mut sense_diacnts = sense_diacnts.lock().unwrap();
+            sense_diacnts[maxsense*epochcnt + epoch_no as usize] += 1;
+        });
+        let mut sense_diacnts = sense_diacnts.lock().unwrap();
 
         let freqs = (0..epochcnt)
             .map(|epoch|
