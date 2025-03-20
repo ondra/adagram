@@ -45,6 +45,10 @@ struct Args {
     /// use uniform prior probabilities for senses
     #[clap(long, default_value_t=false)]
     uniform_prob: bool,
+
+    /// number of worker threads to use (0 to use all processors)
+    #[clap(long, default_value_t=0)]
+    nthreads: usize,
 }
 
 use std::time::{Instant,Duration};
@@ -52,7 +56,10 @@ use std::time::{Instant,Duration};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let corpus = corp::corp::Corpus::open(&args.corpname)?;
-    rayon::ThreadPoolBuilder::new().num_threads(32).build_global().unwrap();
+
+    if args.nthreads != 0 {
+        rayon::ThreadPoolBuilder::new().num_threads(args.nthreads).build_global().unwrap();
+    }
 
     eprintln!("opening attribute {}", &args.posattr);
     let posattr = corpus.open_attribute(&args.posattr)?;
