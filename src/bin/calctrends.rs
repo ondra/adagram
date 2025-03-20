@@ -2,8 +2,7 @@ use clap::Parser;
 
 use adagram::diachronic::*;
 
-
-const VERSION: &str = git_version::git_version!(args=["--tags","--always", "--dirty"]);
+const VERSION: &str = git_version::git_version!(args=["--tags", "--always", "--dirty"]);
 
 /// Calculate diachronic trend for all words in a corpus
 #[derive(Parser, Debug)]

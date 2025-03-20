@@ -13,7 +13,7 @@ use adagram::reservoir_sampling::SamplerExt;
 use corp::wsketch::WMap;
 use corp::wsketch::WSLex;
 
-const VERSION: &str = git_version::git_version!(args=["--tags","--always", "--dirty"]);
+const VERSION: &str = git_version::git_version!(args=["--tags", "--always", "--dirty"]);
 
 /// Assign Word Sketches to senses 
 #[derive(Parser, Debug)]

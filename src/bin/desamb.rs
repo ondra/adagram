@@ -6,7 +6,7 @@ use adagram::common::*;
 
 use clap::Parser;
 
-const VERSION: &str = git_version::git_version!(args=["--tags","--always", "--dirty"]);
+const VERSION: &str = git_version::git_version!(args=["--tags", "--always", "--dirty"]);
 
 /// Assign concordance lines to senses
 #[derive(Parser, Debug)]

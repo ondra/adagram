@@ -6,7 +6,7 @@ use adagram::adagram::VectorModel;
 use adagram::nn::sim;
 use adagram::nn::nearest;
 
-const VERSION: &str = git_version::git_version!(args=["--tags","--always", "--dirty"]);
+const VERSION: &str = git_version::git_version!(args=["--tags", "--always", "--dirty"]);
 
 /// Induce hierarchy on senses
 #[derive(Parser, Debug)]

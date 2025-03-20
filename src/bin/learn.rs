@@ -12,7 +12,7 @@ use adagram::common::*;
 use adagram::hogwild;
 use adagram::huffman;
 
-const VERSION: &str = git_version::git_version!(args=["--tags","--always"]);
+const VERSION: &str = git_version::git_version!(args=["--tags", "--always", "--dirty"]);
 
 /// Train an adaptive skip-gram model
 #[derive(Parser, Debug)]
