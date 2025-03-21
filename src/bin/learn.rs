@@ -332,7 +332,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     vm.counts = std::sync::Arc::try_unwrap(counts_m.into_inner()).expect("fuck").into_inner();
     let id2word = |id| attr.id2str(ixs[id as usize]).to_string();
 
-    vm.save_model(&mut outfile, args.save_threshold, id2word)?;
+    let extrainfo = VERSION.to_string() + " " + &std::env::args().collect::<Vec<String>>().join("\t");
+
+    vm.save_model(&mut outfile, args.save_threshold, id2word, extrainfo)?;
     use std::io::Write;
     outfile.flush()?;
     std::mem::drop(outfile);

@@ -214,7 +214,7 @@ impl VectorModel {
         Ok((vm, id2str))
     }
 
-    pub fn save_model<F>(&self, vecf: &mut std::fs::File, min_prob: f64, id2word: F)
+    pub fn save_model<F>(&self, vecf: &mut std::fs::File, min_prob: f64, id2word: F, extra: String)
             -> Result<(), Box<dyn std::error::Error>>
             where F: Fn(u32) -> String {
         let mut vecwr = std::io::BufWriter::new(vecf);
@@ -245,18 +245,20 @@ impl VectorModel {
             }
         }
 
+        writeln!(vecwr, "extrainfo: {}", extra);
+
         vecwr.flush()?;
 
         Ok(())
     }
 
-    pub fn save_model_atomic<F>(&self, path: &str, min_prob: f64, id2word: F)
+    pub fn save_model_atomic<F>(&self, path: &str, min_prob: f64, id2word: F, extra: String)
             -> Result<(), Box<dyn std::error::Error>>
             where F: Fn(u32) -> String {
         let tmppath = path.to_string() + ".tmp";
         let mut vecf = std::fs::File::create(&tmppath)?;
     
-        self.save_model(&mut vecf, min_prob, id2word)?;
+        self.save_model(&mut vecf, min_prob, id2word, extra)?;
         std::mem::drop(vecf);
         std::fs::rename(tmppath, path)?;
 
