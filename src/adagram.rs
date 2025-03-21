@@ -244,11 +244,9 @@ impl VectorModel {
                 writeln!(vecwr)?;
             }
         }
-
-        writeln!(vecwr, "extrainfo: {}", extra);
-
         vecwr.flush()?;
-
+        writeln!(vecwr, "extrainfo: {}", extra)?;
+        vecwr.flush()?;
         Ok(())
     }
 

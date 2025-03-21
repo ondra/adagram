@@ -51,8 +51,6 @@ struct Args {
     nthreads: usize,
 }
 
-use std::time::{Instant,Duration};
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let corpus = corp::corp::Corpus::open(&args.corpname)?;
@@ -99,7 +97,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let mut z = Array::<f64, Ix1>::zeros(vm.nmeanings());
     let mut zst = vec![];
     for _ in 0..vm.nmeanings() {
         zst.push(RunningStats::new());
@@ -122,10 +119,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("semantic error".into());
     }
 
-    let mut normed = vec![0.0f64; epochcnt];
-    let mut rel = vec![0.0f64; epochcnt];
+    //let mut normed = vec![0.0f64; epochcnt];
+    //let mut rel = vec![0.0f64; epochcnt];
     //let mut next_report_time = Instant::now() + Duration::from_secs(60);
-    let xs = (0..epochcnt).map(|x| x as f64).collect::<Vec<_>>();
+    //let xs = (0..epochcnt).map(|x| x as f64).collect::<Vec<_>>();
 
     // let mut next_report_time = Instant::now() + Duration::from_secs(60);
     /*
@@ -165,9 +162,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let head_mid = x;
 
-        let mut nvalid = 0;
-        let mut ninvalid = 0;
-
         let corpid = if let Some(cid) = posattr.str2id(head) {
             cid
         } else {
@@ -178,9 +172,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let poss = posattr.revidx().id2poss(corpid);
         let pit = poss.par_bridge().map_init(
             || {
-                let mut z = Array::<f64, Ix1>::zeros(vm.nmeanings());
-                let mut lctx = Vec::with_capacity(ntokens);
-                let mut rctx = Vec::with_capacity(ntokens);
+                let z = Array::<f64, Ix1>::zeros(vm.nmeanings());
+                let lctx = Vec::with_capacity(ntokens);
+                let rctx = Vec::with_capacity(ntokens);
                 (z, lctx, rctx)
             },
             |(ref mut z, ref mut lctx, ref mut rctx), pos|{
@@ -260,7 +254,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut sense_diacnts = sense_diacnts.lock().unwrap();
             sense_diacnts[maxsense*epochcnt + epoch_no as usize] += 1;
         });
-        let mut sense_diacnts = sense_diacnts.lock().unwrap();
+        let sense_diacnts = sense_diacnts.lock().unwrap();
 
         let freqs = (0..epochcnt)
             .map(|epoch|

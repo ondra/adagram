@@ -37,7 +37,7 @@ pub struct ReservoirSamplerG<'a, E: Default, const N: usize> {
 }
 
 impl <'a, E: Default, const N: usize> ReservoirSamplerG<'_, E, { N }> {
-    pub fn new(rng: &'a mut SmallRng) -> ReservoirSamplerG<'_, E, { N }> {
+    pub fn new(rng: &'_ mut SmallRng) -> ReservoirSamplerG<'_, E, { N }> {
         ReservoirSamplerG { elems: core::array::from_fn(|_i| E::default()), rng, c: 0 }
     }
     pub fn push(&mut self, item: E) {
