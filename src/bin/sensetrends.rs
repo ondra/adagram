@@ -177,7 +177,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let rctx = Vec::with_capacity(ntokens);
                 (z, lctx, rctx)
             },
-            |(ref mut z, ref mut lctx, ref mut rctx), pos|{
+            |(z, lctx, rctx), pos|{
             let structpos = if let Some(structpos) = diastruct.num_at_pos(pos) {
                 structpos
             } else {
