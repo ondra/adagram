@@ -1,6 +1,7 @@
 use clap::Parser;
 
 use adagram::diachronic::*;
+use slope::*;
 
 const VERSION: &str = git_version::git_version!(args=["--tags", "--always", "--dirty"]);
 
@@ -136,8 +137,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             rel[j] = w as f64 * normed[j] / sum_normed;
         }
 
-        let (lp, lslope) = adagram::diachronic::linreg(&xs[..], &rel);
-        let (mp, mslope) = adagram::diachronic::mk(&xs[..], &rel);
+        let (lp, lslope) = linreg(&xs[..], &rel);
+        let (mp, mslope) = mk(&xs[..], &rel);
 
         let lslope_over_all_periods = lslope * (w as f64 - 1.);
         let mslope_over_all_periods = mslope * (w as f64 - 1.);
