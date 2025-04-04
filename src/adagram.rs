@@ -264,4 +264,26 @@ impl VectorModel {
     }
 
     pub fn nmeanings(&self) -> usize { self.in_vecs.shape()[1] }
+    pub fn newz(&self) -> Array::<f64, Ix1> {
+        Array::<f64, Ix1>::zeros(self.nmeanings())
+    }
+    pub fn var_update_z(&self, head_id: u32, ctx_id: u32, z: &mut Array::<f64, Ix1>) {
+        crate::common::var_update_z(&self.in_vecs, &self.out_vecs, &self.code, &self.path, head_id, ctx_id, z);
+    }
+    pub fn expected_pi(&self, head_id: u32, z: &mut Array::<f64, Ix1>, min_prob: f64, uniform_prob: bool) -> u32 {
+        let n_senses = expected_pi(&self.counts, self.alpha, head_id, z, min_prob);
+
+        if uniform_prob {
+            for zk in z.iter_mut() {
+                if *zk < min_prob { *zk = 0.; }
+                else { *zk = 1. / n_senses as f64; }
+            }
+        } else {
+            for zk in z.iter_mut() {
+                if *zk < min_prob { *zk = 0.; }
+                *zk = zk.ln();  // ???
+            }
+        }
+        n_senses
+    }
 }
