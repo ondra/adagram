@@ -94,3 +94,61 @@ pub fn nearest(vm: &VectorModel, head_id: usize, senseno: usize, top_k: usize, m
     hv.sort_by(sf);
     hv
 }
+
+fn norm_l2v<D>(a: ArrayView<'_, f32, D>) -> f32
+    where D: ndarray::Dimension,
+{
+    a.fold(0.0, |l, r| l + *r**r).sqrt()
+}
+
+pub fn nearest_mmul(vm: &VectorModel, head_id: usize, top_k: usize, min_count: usize) -> Vec<Vec<(u32, u32, f32)>>
+{
+    let ii = vm.in_vecs.len_of(Axis(0));
+    let jj = vm.in_vecs.len_of(Axis(1));
+
+    let qvecs_r = vm.in_vecs.slice(s![head_id, .., ..]);
+    let qnorms = qvecs_r.map_axis(Axis(1), norm_l2v);
+    let qvecs = qvecs_r.to_owned() / qnorms.insert_axis(Axis(1));
+
+    let sf = |(_id1, _s1, sim1): &(u32, u32, f32), (_id2, _s2, sim2): &(u32, u32, f32)| {
+        sim2.partial_cmp(sim1).unwrap_or_else(
+            || match (sim2.is_nan(), sim1.is_nan()) {
+                (true, true) => std::cmp::Ordering::Equal,
+                (false, true) => std::cmp::Ordering::Greater,
+                (true, false) => std::cmp::Ordering::Less,
+                (false, false) => panic!(),
+            }
+        )
+    };
+
+    let mut heaps: Vec<_> =
+        (0..jj).map(|_i| BinaryHeap::new_by(sf)).collect();
+
+    if vm.normed {
+        for i in 0..ii { for j in 0..jj {
+            let v = vm.in_vecs.slice(s![i, j, ..]);
+            let sim = qvecs.dot(&v);
+            for qj in 0..jj {
+                if vm.counts[[i, j]] < min_count as f32 { continue; }
+                heaps[qj].push((i as u32, j as u32, sim[qj]));
+                if heaps[qj].len() > top_k { heaps[qj].pop(); }
+            }
+        }}
+    } else {
+        for i in 0..ii { for j in 0..jj {
+            let v = vm.in_vecs.slice(s![i, j, ..]);
+            let sim = qvecs.dot(&v) / norm_l2(&v);
+            for qj in 0..jj {
+                if vm.counts[[i, j]] < min_count as f32 { continue; }
+                heaps[qj].push((i as u32, j as u32, sim[qj]));
+                if heaps[qj].len() > top_k { heaps[qj].pop(); }
+            }
+        }}
+    }
+
+    let hvs: Vec<_> = heaps.iter_mut().map(|heap| {
+        let mut hv: Vec<_> = heap.drain().collect();
+        hv.sort_by(sf); hv
+    }).collect();
+    hvs
+}
