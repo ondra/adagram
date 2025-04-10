@@ -139,13 +139,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let nmeanings = vm.nmeanings() as usize;
                     use std::sync::{Arc, Mutex};
-    let sense_diacnts = Arc::new(Mutex::new(vec![0u64; nmeanings * epochcnt]));
+    let sense_diacnts = Arc::new(Mutex::new(vec![0f64; nmeanings * epochcnt]));
 
     eprintln!("ready");
     for line in std::io::stdin().lines() {
         {
             let mut sense_diacnts = sense_diacnts.lock().unwrap();
-            sense_diacnts.iter_mut().for_each(|v| *v = 0);
+            sense_diacnts.iter_mut().for_each(|v| *v = 0.);
         }
         let unwrapped = line?;
         let head = unwrapped.trim();
@@ -252,14 +252,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }).flatten();
         pit.for_each(|(maxsense, epoch_no)|{
             let mut sense_diacnts = sense_diacnts.lock().unwrap();
-            sense_diacnts[maxsense*epochcnt + epoch_no as usize] += 1;
+            sense_diacnts[maxsense*epochcnt + epoch_no as usize] += 1.;
         });
         let sense_diacnts = sense_diacnts.lock().unwrap();
 
         let freqs = (0..epochcnt)
             .map(|epoch|
                 (0..nmeanings).map(|sense| sense_diacnts[sense*epochcnt + epoch]).sum()
-            ).collect::<Vec<u64>>();
+            ).collect::<Vec<f64>>();
 
         println!("HW {}", head);
         for sense in 0..nmeanings as usize {
