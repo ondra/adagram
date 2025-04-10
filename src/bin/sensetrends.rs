@@ -46,6 +46,10 @@ struct Args {
     #[clap(long, default_value_t=false)]
     uniform_prob: bool,
 
+    /// accumulate sense distributions instead of counting the maximal values
+    #[clap(long, default_value_t=false)]
+    distrib: bool,
+
     /// number of worker threads to use (0 to use all processors)
     #[clap(long, default_value_t=0)]
     nthreads: usize,
@@ -172,12 +176,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let poss = posattr.revidx().id2poss(corpid);
         let pit = poss.par_bridge().map_init(
             || {
-                let z = Array::<f64, Ix1>::zeros(vm.nmeanings());
                 let lctx = Vec::with_capacity(ntokens);
                 let rctx = Vec::with_capacity(ntokens);
-                (z, lctx, rctx)
+                (lctx, rctx)
             },
-            |(z, lctx, rctx), pos|{
+            |(lctx, rctx), pos|{
+            let mut z = Array::<f64, Ix1>::zeros(vm.nmeanings());
             let structpos = if let Some(structpos) = diastruct.num_at_pos(pos) {
                 structpos
             } else {
@@ -185,7 +189,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return None;
             };
 
-            let n_senses = expected_pi(&vm.counts, vm.alpha, x, z, args.sense_threshold);
+            let n_senses = expected_pi(&vm.counts, vm.alpha, x, &mut z, args.sense_threshold);
 
             if args.uniform_prob {
                 for zk in z.iter_mut() {
@@ -231,28 +235,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             for ctx_mid in lctx.iter()
                     .rev().filter_map(fmap_ids).take(args.window) {
                 var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path,
-                    head_mid, ctx_mid, z);
+                    head_mid, ctx_mid, &mut z);
             }
 
             for ctx_mid in rctx.iter()
                     .filter_map(fmap_ids).take(args.window) {
                 var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path,
-                    head_mid, ctx_mid, z);
+                    head_mid, ctx_mid, &mut z);
             }
 
-            exp_normalize(z);
+            exp_normalize(&mut z);
             //for (i, zk) in z.iter().enumerate() {
             //    zst[i].push(*zk);
 
-            let maxsense: Option<usize> = z.iter()
-                .enumerate()
-                .max_by(|(_, a),(_, b)| a.total_cmp(b))
-                .map(|(i, _)| i);
-            Some((maxsense.unwrap(), epoch_no))
+            if !args.distrib {
+                let maxsense: usize = z.iter()
+                    .enumerate()
+                    .max_by(|(_, a),(_, b)| a.total_cmp(b))
+                    .map(|(i, _)| i)
+                    .unwrap();
+                for iz in 0..z.len() {
+                    z[iz] = if iz == maxsense { 1. } else { 0. };
+                }
+            }
+            Some((z, epoch_no))
         }).flatten();
-        pit.for_each(|(maxsense, epoch_no)|{
+        pit.for_each(|(z, epoch_no)|{
             let mut sense_diacnts = sense_diacnts.lock().unwrap();
-            sense_diacnts[maxsense*epochcnt + epoch_no as usize] += 1.;
+            for iz in 0..z.len() {
+                sense_diacnts[iz*epochcnt + epoch_no as usize] += z[iz];
+            }
         });
         let sense_diacnts = sense_diacnts.lock().unwrap();
 
