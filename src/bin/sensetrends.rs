@@ -53,6 +53,10 @@ struct Args {
     /// number of worker threads to use (0 to use all processors)
     #[clap(long, default_value_t=0)]
     nthreads: usize,
+
+    /// skip positions with a specific attribute value (specify as attribute:value1,2,3,...)
+    #[clap(long)]
+    skip: Option<String>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -70,6 +74,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let diastructname = diaattrparts.next().ok_or("")?;
     let diastructattr = corpus.open_attribute(&args.diaattr)?;
     let diastruct = corpus.open_struct(diastructname)?;
+    let skip = if let Some(skip) = &args.skip {
+        let skipparts = skip.splitn(2, ":").collect::<Vec<_>>();
+        if skipparts.len() != 2 {
+            return Err("bad skip specification".into());
+        }
+        let skipattrname = skipparts[0];
+        let skipattr = corpus.open_attribute(skipattrname)?;
+
+        let skipvals = skipparts[1];
+        let mut skipids = std::collections::HashSet::<u32>::new();
+        for skipval in skipvals.split(",") {
+            if let Some(skipid) = skipattr.str2id(skipval) {
+                skipids.insert(skipid);
+            } else {
+                eprintln!("WARNING: skip value {} not found in lexicon", skipval);
+            }
+        }
+        Some((skipattr, skipids))
+    } else {
+        None
+    };
 
     let (diamap, new_norms) = map_diavals(diastructattr.as_ref(), args.epoch_limit)?;
 
@@ -188,6 +213,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("WARN: position {} for id {} is outside structure", pos, corpid);
                 return None;
             };
+
+            if let Some((skipattr, skipids)) = &skip {
+                let curskipattrid = skipattr.text().get(structpos);
+                if skipids.contains(&curskipattrid) {
+                    return None;
+                }
+            }
 
             let n_senses = expected_pi(&vm.counts, vm.alpha, x, &mut z, args.sense_threshold);
 
