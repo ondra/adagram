@@ -63,9 +63,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let corpus = corp::corp::Corpus::open(&args.corpname)?;
 
-    if args.nthreads != 0 {
-        rayon::ThreadPoolBuilder::new().num_threads(args.nthreads).build_global().unwrap();
-    }
+    let tpb = rayon::ThreadPoolBuilder::new()
+        .thread_name(|tid| format!("rayon_worker{}", tid));
+    if args.nthreads != 0 { tpb.num_threads(args.nthreads) } else { tpb }
+        .build_global().unwrap();
 
     eprintln!("opening attribute {}", &args.posattr);
     let posattr = corpus.open_attribute(&args.posattr)?;
