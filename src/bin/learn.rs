@@ -298,12 +298,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let out_vecs_c = out_vecs_m.clone();
                 let counts_c = counts_m.clone();
                 let thread_id_c = thread_id;
-                handles.push(
-                    scope.spawn(move ||
-                        // trainfunc(in_vecs_m.clone(), out_vecs_m.clone(), counts_m.clone(), thread_id)
+                let handle = std::thread::Builder::new()
+                    .name(format!("worker{}", thread_id))
+                    .spawn_scoped(scope, move ||
                         trainfunc(in_vecs_c, out_vecs_c, counts_c, thread_id_c)
-                    )
-                );
+                    ).unwrap();
+                handles.push(handle);
             }
 
             eprintln!("workers started");
