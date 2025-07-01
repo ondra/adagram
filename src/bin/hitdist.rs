@@ -107,6 +107,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sense_diacnts = Arc::new(Mutex::new(vec![0f64; ntype as usize * epochcnt]));
 
     eprintln!("ready");
+    if true { // tsv
+        println!("hw\ttt\tnorm\ttotal");
+    }
     for line in std::io::stdin().lines() {
         {
             let mut sense_diacnts = sense_diacnts.lock().unwrap();
@@ -177,26 +180,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 (0..epochcnt).map(|epoch| sense_diacnts[type_ as usize*epochcnt + epoch]).sum()
             ).collect::<Vec<f64>>();
 
-        println!("HW {}", head);
-        for type_ in 0..ntype as usize {
-            print!("t##{}", type_);
-            print!("\t{}", typenorms.frq(type_ as u32));
-            print!("\t{}", types[type_]);
+        if false { // print block format
+            println!("HW {}", head);
+            for type_ in 0..ntype as usize {
+                print!("t##{}", type_);
+                print!("\t{}", typenorms.frq(type_ as u32));
+                print!("\t{}", types[type_]);
+                for epoch in 0..epochcnt {
+                    print!("\t{}", sense_diacnts[type_ as usize*epochcnt + epoch]);
+                }
+                println!();
+            }
+            print!("f");
             for epoch in 0..epochcnt {
-                print!("\t{}", sense_diacnts[type_ as usize*epochcnt + epoch]);
+                print!("\t{}", freqs[epoch]);
             }
             println!();
+            print!("n");
+            for epoch in 0..epochcnt {
+                print!("\t{}", new_norms[epoch]);
+            }
+            println!();
+        } else { // print tsv, only texttype data
+            for type_ in 0..ntype as usize {
+                println!("{}\t{}\t{}\t{}", head, type_, typenorms.frq(type_ as u32), types[type_]);
+            }
         }
-        print!("f");
-        for epoch in 0..epochcnt {
-            print!("\t{}", freqs[epoch]);
-        }
-        println!();
-        print!("n");
-        for epoch in 0..epochcnt {
-            print!("\t{}", new_norms[epoch]);
-        }
-        println!();
 
         /*
         let mut sum_normed = 0.0f64;
