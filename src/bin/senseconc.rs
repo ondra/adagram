@@ -16,11 +16,15 @@ struct Args {
     /// corpus
     corpname: String,
     
-    /// positional attribute
+    /// positional attribute corresponding to sense model used for disambiguation
     posattr: String,
-    
-    /// diachronic structure attribute
-    diaattr: String,
+
+    /// positional attribute used to emit text
+    word: String,
+
+    #[clap(long)]
+    /// glue structure to remove extra spaces in text
+    glue: Option<String>,
     
     #[clap(long,default_value_t=5)]
     minfreq: usize,
@@ -64,6 +68,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     eprintln!("opening attribute {}", &args.posattr);
     let posattr = corpus.open_attribute(&args.posattr)?;
+
+    eprintln!("opening attribute {}", &args.word);
+    let word = corpus.open_attribute(&args.word)?;
+
+    let glue = match &args.glue {
+        Some(glue) => {
+            eprintln!("opening structure {}", glue);
+            Some(corpus.open_struct(glue)?)
+        }
+        None => None,
+    };
 
     eprintln!("loading model");
     let (vm, id2str) = VectorModel::load_model(&args.model)?;
@@ -219,21 +234,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             })
             .collect();
 
-        res.sort_by(|(prob1, _maxpos1, _pos1), (prob2, _maxpos2, _pos2)| f64::total_cmp(prob1, prob2));
+        eprintln!("sorting senses");
+        res.sort_by(
+                |(prob1, _maxpos1, _pos1), (prob2, _maxpos2, _pos2)|
+                    f64::total_cmp(prob2, prob1)
+        );
+
+        let conctokens = 25;
+        let printconc = |pos| {
+            let start = if pos >= conctokens as u64 { pos - conctokens as u64 } else { 0 };
+            let ctxit = word.iter_ids(start);
+            for (ctxpos, conc_cid) in std::iter::zip(start.., ctxit) {
+                if ctxpos > pos + conctokens as u64 {
+                    break;
+                }
+                if ctxpos != start { match &glue {
+                    Some(glue) => {
+                        if glue.find_beg(ctxpos) == ctxpos {
+                        } else { print!(" "); }
+                    },
+                    _ => { print!(" ") },
+                }}
+                if ctxpos == pos { print!("\t"); }
+                print!("{}", word.id2str(conc_cid));
+                if ctxpos == pos { print!("\t"); }
+            }
+        };
+
+        use itertools::Itertools;
 
         for iz in 0..nmeanings {
             let mut found_rows = 0;
-            for (prob, maxpos, pos) in &res {
-                if *maxpos == iz {
-                    found_rows += 1;
-                    print!("{} {} {}", *prob, *maxpos, *pos);
-                    if max_rows >= found_rows { break };
-                }
+            for (_key, mut group) in &res.iter().chunk_by(|(prob, maxpos, _pos)| (prob, maxpos)) {
+                let (prob, maxpos, pos) = group.next().unwrap();
+                    if *maxpos == iz {
+                        found_rows += 1;
+                        print!("{}\t{:.4}\t{}\t{}\t", head, *prob, *maxpos, *pos);
+                        printconc(*pos);
+                        println!();
+                        if found_rows >= max_rows { break };
+                    }
             }
-            // print!("\t{}", z[iz]);
         }
-
-        println!("HW {}", head);
     }
 
     eprintln!("done.");
