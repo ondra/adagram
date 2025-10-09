@@ -132,6 +132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let nmeanings = vm.nmeanings() as usize;
 
     eprintln!("ready");
+    println!("hw\tsn\tprob\tpos\tlctx\tkw\trctx");
     
     for line in std::io::stdin().lines() {
         let unwrapped = line?;
@@ -269,7 +270,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let (prob, maxpos, pos) = group.next().unwrap();
                     if *maxpos == iz {
                         found_rows += 1;
-                        print!("{}\t{:.4}\t{}\t{}\t", head, *prob, *maxpos, *pos);
+                        print!("{}\t{:.5}\t{}\t{}\t", head, *maxpos, *prob, *pos);
                         printconc(*pos);
                         println!();
                         if found_rows >= max_rows { break };
