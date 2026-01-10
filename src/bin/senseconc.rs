@@ -55,6 +55,14 @@ struct Args {
     /// number of worker threads to use (0 to use all processors)
     #[clap(long, default_value_t=0)]
     nthreads: usize,
+
+    /// how many concordance lines to provide
+    #[clap(long, default_value_t=100)]
+    maxrows: usize,
+
+    /// minimum norm for a structure attribute value to be considered
+    #[clap(long,default_value_t=0.9)]
+    minprob: f64,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -224,7 +232,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });*/
 
-        let max_rows = 100;
         let mut res: Vec<_> = pit
             .map(|(z, pos)| {
                 let maxpos: usize = z.iter()
@@ -269,11 +276,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             for (_key, mut group) in &res.iter().chunk_by(|(prob, maxpos, _pos)| (prob, maxpos)) {
                 let (prob, maxpos, pos) = group.next().unwrap();
                     if *maxpos == iz {
-                        found_rows += 1;
-                        print!("{}\t{:.5}\t{}\t{}\t", head, *maxpos, *prob, *pos);
-                        printconc(*pos);
-                        println!();
-                        if found_rows >= max_rows { break };
+                        if *prob >= args.minprob {
+                            found_rows += 1;
+                            print!("{}\t{:.5}\t{}\t{}\t", head, *maxpos, *prob, *pos);
+                            printconc(*pos);
+                            println!();
+                            if found_rows >= args.maxrows { break };
+                        } else {
+                            break;
+                        }
                     }
             }
         }
