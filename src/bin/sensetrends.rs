@@ -24,14 +24,11 @@ struct Args {
     /// diachronic structure attribute
     diaattr: String,
     
-    #[clap(long,default_value_t=5)]
-    minfreq: usize,
-
     /// adaptive skip-gram model
     model: String,
 
     /// window size
-    #[clap(long,default_value_t=4)]
+    #[clap(long,default_value_t=10)]
     window: usize,
 
     /// minimum apriori sense probability for the sense to be considered
@@ -53,6 +50,10 @@ struct Args {
     /// number of worker threads to use (0 to use all processors)
     #[clap(long, default_value_t=0)]
     nthreads: usize,
+
+    /// do not print the TSV header as the first line of output
+    #[clap(long, default_value_t=false)]
+    skip_header: bool,
 
     /// skip positions with a specific attribute value (specify as attribute:value1,2,3,...)
     #[clap(long)]
@@ -170,6 +171,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let nmeanings = vm.nmeanings() as usize;
                     use std::sync::{Arc, Mutex};
     let sense_diacnts = Arc::new(Mutex::new(vec![0f64; nmeanings * epochcnt]));
+
+    if !args.skip_header {
+        print!("hw\tepoch\t");
+        for sense in 0..nmeanings {
+            print!("\ts{}", sense);
+        }
+        println!("\tnorm");
+    }
 
     eprintln!("ready");
     for line in std::io::stdin().lines() {
@@ -301,31 +310,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
         let sense_diacnts = sense_diacnts.lock().unwrap();
 
+        for epoch in 0..epochcnt {
+            print!("{}\t{}", head, epoch);
+            for sense in 0..nmeanings {
+                print!("\t{}", sense_diacnts[sense*epochcnt + epoch]);
+            }
+            println!("\t{}", new_norms[epoch]);
+        }
+
+        /*
         let freqs = (0..epochcnt)
             .map(|epoch|
                 (0..nmeanings).map(|sense| sense_diacnts[sense*epochcnt + epoch]).sum()
             ).collect::<Vec<f64>>();
-
-        println!("HW {}", head);
-        for sense in 0..nmeanings as usize {
-            print!("s##{}", sense);
-            for epoch in 0..epochcnt {
-                print!("\t{}", sense_diacnts[sense*epochcnt + epoch]);
-            }
-            println!();
-        }
-        print!("f");
-        for epoch in 0..epochcnt {
-            print!("\t{}", freqs[epoch]);
-        }
-        println!();
-        print!("n");
-        for epoch in 0..epochcnt {
-            print!("\t{}", new_norms[epoch]);
-        }
-        println!();
-
-        /*
         let mut sum_normed = 0.0f64;
         for j in 0..w {
             normed[j] = if new_norms[j] != 0.0f64 {
