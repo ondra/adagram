@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let hv = nearest(&vm, head_id as usize, senseno, 10, 5);
         for (i, j, sim) in hv.iter() {
-            println!("{} {} {}", sim, id2str[*i as usize], j);
+            println!("{}\t{}\t{}", sim, id2str[*i as usize], j);
         }
     }
 
