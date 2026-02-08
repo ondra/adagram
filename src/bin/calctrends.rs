@@ -54,7 +54,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let h = posattr.id_range() as usize;
     let w = new_norms.len();
-    eprintln!("w {}", w);
 
     if w < 2 {
         eprintln!("WARNING: less than 2 valid structattr values");
