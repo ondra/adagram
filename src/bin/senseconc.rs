@@ -33,7 +33,7 @@ struct Args {
     model: String,
 
     /// window size
-    #[clap(long,default_value_t=4)]
+    #[clap(long,default_value_t=10)]
     window: usize,
 
     /// minimum apriori sense probability for the sense to be considered
