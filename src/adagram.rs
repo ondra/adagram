@@ -123,38 +123,43 @@ impl VectorModel {
         let mut line = String::new();
         rf.read_line(&mut line)?;
         let mut buf = [0u8; 4];
+
+        // see the description below, but should not be necessary unless using legacy data
+        const ALLOW_MALFORMED_MODELS: bool = false;
+
         for i in 0..lexsize {
-            //line.clear();
-            //rf.read_line(&mut line)?;
             let word = line.trim().to_string();
             id2str.push(word);
 
             line.clear();
-            rf.read_line(&mut line).unwrap();
-            let _ns = line.trim().parse::<usize>()?;
+            rf.read_line(&mut line)?;
+            let hw_nsenses = line.trim().parse::<usize>().map_err(|_| "bad number of senses")?;
 
             line.clear();
-            rf.read_line(&mut line).expect("y");
+            rf.read_line(&mut line)?;
             let mut jj = 0;
             while jj < nsenses {
-                //line.clear();
-                //rf.read_line(&mut line).expect("y");
-                let senseno = line.trim().parse::<usize>()? - 1;
+                let senseno = line.trim().parse::<usize>().map_err(|_| "bad sense number")? - 1;
                 if senseno > nsenses {
-                    eprintln!("bad senseno {}", senseno);
+                    return Err(format!("bad senseno {}", senseno).into());
                 }
                 for k in 0..dim {
                     rf.read_exact(&mut buf)?;
                     vm.in_vecs[[i, senseno, k]] = f32::from_le_bytes(buf);
                 }
                 line.clear();
-                rf.read_line(&mut line).expect("x");
+                rf.read_line(&mut line)?;
                 if line.trim() != "" {
-                    eprintln!("bad line {}, idx {}/{}, word {}", &line.trim(), i, lexsize, id2str[i]);
+                    return Err(format!("trailing characters after binary vector").into());
                 };
 
-                const ALLOW_MALFORMED_MODELS: bool = true;
-                if ALLOW_MALFORMED_MODELS {
+                jj += 1;
+
+                if !ALLOW_MALFORMED_MODELS {
+                    line.clear();
+                    rf.read_line(&mut line)?;
+                    if jj == hw_nsenses { break }
+                } else {
                 ///////////////// HACK HACK HACK ////////////////////////
                 //  The original writer does not store the number of senses
                 //  properly; the senses are stored only when their probability
@@ -169,6 +174,7 @@ impl VectorModel {
                 //
                 //  Note that this code is safe when the values are lemposes
                 //  in the format 'word-x'.
+                ///////////////// HACK HACK HACK ////////////////////////
                 const VERBOSE: bool = false;
                 rf.read_line(&mut line)?;
                 if line.is_empty() { break; }
@@ -217,12 +223,9 @@ impl VectorModel {
                     },
                     Err(_) => /* it's surely a new word */ break,
                 }
-                // let mut v2 = Vec::new();
-                // let l2 = s.read_until(b'\n', &mut v2);
+                /////////// END HACK /////////////////
                 /////////// END HACK /////////////////
                 }
-
-                jj += 1;
             }
         }
         
