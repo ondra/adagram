@@ -173,7 +173,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sense_diacnts = Arc::new(Mutex::new(vec![0f64; nmeanings * epochcnt]));
 
     if !args.skip_header {
-        print!("hw\tepoch\t");
+        print!("hw\tepoch");
         for sense in 0..nmeanings {
             print!("\ts{}", sense);
         }
