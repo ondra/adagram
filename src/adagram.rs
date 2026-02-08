@@ -153,9 +153,23 @@ impl VectorModel {
                     eprintln!("bad line {}, idx {}/{}, word {}", &line.trim(), i, lexsize, id2str[i]);
                 };
 
+                const ALLOW_MALFORMED_MODELS: bool = true;
+                if ALLOW_MALFORMED_MODELS {
                 ///////////////// HACK HACK HACK ////////////////////////
-                //  the writer does not store the number of senses properly:
-                //  this tries to guess whether to read a new sense or a whole new record
+                //  The original writer does not store the number of senses
+                //  properly; the senses are stored only when their probability
+                //  crosses a threshold, but this threshold is not the same
+                //  as the threshold used to calculate the number of senses,
+                //  so the encoded sense count might differ from the amount
+                //  of actually stored senses if a non-default minimum probability
+                //  is used.
+                //
+                //  This code tries to guess whether to read a new sense or
+                //  a whole new record by a heuristic lookahead.
+                //
+                //  Note that this code is safe when the values are lemposes
+                //  in the format 'word-x'.
+                const VERBOSE: bool = false;
                 rf.read_line(&mut line)?;
                 if line.is_empty() { break; }
                 let s1 = line.trim();
@@ -183,14 +197,14 @@ impl VectorModel {
                             }
                             match state {
                                 10 => {
-                                    eprintln!("parsing record after id {}, got {}", i, state);
+                                    if VERBOSE { eprintln!("parsing record after id {}, got {}", i, state); }
                                     break; // got two numbers followed by newlines
                                 },
                                 99 => {
                                     // not a new word
                                 },
                                 _ => {
-                                    eprintln!("parsing record after id {}, got {}", i, state);
+                                    if VERBOSE { eprintln!("parsing record after id {}, got {}", i, state); }
                                 },
                             }
 
@@ -206,6 +220,7 @@ impl VectorModel {
                 // let mut v2 = Vec::new();
                 // let l2 = s.read_until(b'\n', &mut v2);
                 /////////// END HACK /////////////////
+                }
 
                 jj += 1;
             }
