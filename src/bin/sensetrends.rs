@@ -11,7 +11,7 @@ use rayon::prelude::*;
 
 const VERSION: &str = git_version::git_version!(args=["--tags", "--always", "--dirty"]);
 
-/// Assign Word Sketches to senses
+/// Assign Word Form instances to senses and diachronic epochs
 #[derive(Parser, Debug)]
 #[clap(author, version=VERSION, about)]
 struct Args {
@@ -139,7 +139,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // diachronic init
     let h = posattr.id_range() as usize;
     let epochcnt = new_norms.len();
-    eprintln!("w {}", epochcnt);
+    eprintln!("There are {} salient epochs to process.", epochcnt);
 
     if epochcnt < 2 {
         eprintln!("WARNING: fewer than 2 valid structattr values");
@@ -150,24 +150,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("WARNING: empty corpus");
         return Err("semantic error".into());
     }
-
-    //let mut normed = vec![0.0f64; epochcnt];
-    //let mut rel = vec![0.0f64; epochcnt];
-    //let mut next_report_time = Instant::now() + Duration::from_secs(60);
-    //let xs = (0..epochcnt).map(|x| x as f64).collect::<Vec<_>>();
-
-    // let mut next_report_time = Instant::now() + Duration::from_secs(60);
-    /*
-    let mut mktf = std::fs::File::create(trendbase.clone() + ".mkts_all.trends")?;
-    let mut mktwr = BinaryTrendsWriter::new(&mut mktf)?;
-    let mut mkmf = std::fs::File::create(trendbase.clone() + ".mkts_all.minigraphs")?;
-    let mut mkmwr = BinaryMinigraphWriter::new(&mut mkmf)?;
-
-    let mut lrtf = std::fs::File::create(trendbase.clone() + ".linreg_all.trends")?;
-    let mut lrtwr = BinaryTrendsWriter::new(&mut lrtf)?;
-    let mut lrmf = std::fs::File::create(trendbase.clone() + ".linreg_all.minigraphs")?;
-    let mut lrmwr = BinaryMinigraphWriter::new(&mut lrmf)?;
-    */
 
     let nmeanings = vm.nmeanings() as usize;
                     use std::sync::{Arc, Mutex};
@@ -288,8 +270,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             exp_normalize(&mut z);
-            //for (i, zk) in z.iter().enumerate() {
-            //    zst[i].push(*zk);
 
             if !args.distrib {
                 let maxsense: usize = z.iter()
