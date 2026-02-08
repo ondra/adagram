@@ -1,9 +1,12 @@
 use clap::Parser;
 
 use ndarray::prelude::*;
+use ndarray_rand::rand::prelude::SmallRng;
+use ndarray_rand::rand::SeedableRng;
 
 use adagram::adagram::*;
 use adagram::common::*;
+use adagram::reservoir_sampling::SamplerExt;
 
 use rayon::prelude::*;
 
@@ -26,9 +29,6 @@ struct Args {
     /// glue structure to remove extra spaces in text
     glue: Option<String>,
     
-    #[clap(long,default_value_t=5)]
-    minfreq: usize,
-
     /// adaptive skip-gram model
     model: String,
 
@@ -40,17 +40,9 @@ struct Args {
     #[clap(long,default_value_t=1e-3)]
     sense_threshold: f64,
 
-    /// minimum norm for a structure attribute value to be considered
-    #[clap(long,default_value_t=0.15)]
-    epoch_limit: f64,
-
     /// use uniform prior probabilities for senses
     #[clap(long, default_value_t=false)]
     uniform_prob: bool,
-
-    /// accumulate sense distributions instead of counting the maximal values
-    #[clap(long, default_value_t=false)]
-    distrib: bool,
 
     /// number of worker threads to use (0 to use all processors)
     #[clap(long, default_value_t=0)]
@@ -60,9 +52,13 @@ struct Args {
     #[clap(long, default_value_t=100)]
     maxrows: usize,
 
-    /// minimum norm for a structure attribute value to be considered
+    /// minimum sense probability for a concordance line
     #[clap(long,default_value_t=0.9)]
     minprob: f64,
+
+    /// visit at most the specified amount of concordance lines randomly
+    #[clap(long)]
+    sampleconc: Option<usize>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -87,6 +83,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         None => None,
     };
+
+    let mut rng = SmallRng::seed_from_u64(666);
 
     eprintln!("loading model");
     let (vm, id2str) = VectorModel::load_model(&args.model)?;
@@ -164,9 +162,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("ERROR: {} not found in corpus lexicon", head);
             continue;
         };
-
         let poss = posattr.revidx().id2poss(corpid);
-        let pit = poss.par_bridge().map_init(
+        let poss_sampled = || -> Box<dyn Iterator<Item=u64> + Send> {
+            if let Some(nsamples) = args.sampleconc {
+                if nsamples < poss.len() {
+                    return Box::new(
+                        poss.sample(nsamples as usize, &mut rng)
+                    )
+                }
+            }
+            Box::new(poss)
+        };
+
+        let pit = poss_sampled().par_bridge().map_init(
             || {
                 let lctx = Vec::with_capacity(ntokens);
                 let rctx = Vec::with_capacity(ntokens);
