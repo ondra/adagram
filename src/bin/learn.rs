@@ -327,9 +327,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
               local_words_read, args.epochs,
               local_words_read as f32 / starttime.elapsed().as_secs() as f32);
 
-    vm.in_vecs = std::sync::Arc::try_unwrap(in_vecs_m.into_inner()).expect("fuck").into_inner();
-    vm.out_vecs = std::sync::Arc::try_unwrap(out_vecs_m.into_inner()).expect("fuck").into_inner();
-    vm.counts = std::sync::Arc::try_unwrap(counts_m.into_inner()).expect("fuck").into_inner();
+    vm.in_vecs = std::sync::Arc::try_unwrap(in_vecs_m.into_inner()).expect("arc").into_inner();
+    vm.out_vecs = std::sync::Arc::try_unwrap(out_vecs_m.into_inner()).expect("arc").into_inner();
+    vm.counts = std::sync::Arc::try_unwrap(counts_m.into_inner()).expect("arc").into_inner();
     let id2word = |id| attr.id2str(ixs[id as usize]).to_string();
 
     let extrainfo = VERSION.to_string() + " " + &std::env::args().collect::<Vec<String>>().join("\t");
