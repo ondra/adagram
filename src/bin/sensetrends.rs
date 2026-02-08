@@ -98,7 +98,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    let (diamap, new_norms) = map_diavals(diastructattr.as_ref(), args.epoch_limit)?;
+    let (diamap, new_norms, ordered_epochnames) =
+        map_diavals(diastructattr.as_ref(), args.epoch_limit)?;
 
     eprintln!("loading model");
     let (vm, id2str) = VectorModel::load_model(&args.model)?;
@@ -311,7 +312,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let sense_diacnts = sense_diacnts.lock().unwrap();
 
         for epoch in 0..epochcnt {
-            print!("{}\t{}", head, epoch);
+            print!("{}\t{}", head, ordered_epochnames[epoch]);
             for sense in 0..nmeanings {
                 print!("\t{}", sense_diacnts[sense*epochcnt + epoch]);
             }

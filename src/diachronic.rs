@@ -117,7 +117,7 @@ pub fn resample(from: &[f64], to: &mut [f64]) {
 }
 
 pub fn map_diavals(diastructattr: &dyn corp::corp::Attr, epoch_limit: f64)
-        -> Result<(Vec<u32>, Vec<f64>), Box<dyn std::error::Error>> {
+        -> Result<(Vec<u32>, Vec<f64>, Vec<String>), Box<dyn std::error::Error>> {
     let diavals: Vec<_> = (0..diastructattr.id_range())
         .map(|did| diastructattr.id2str(did))
         .collect();
@@ -164,6 +164,7 @@ pub fn map_diavals(diastructattr: &dyn corp::corp::Attr, epoch_limit: f64)
 
     let mut newid = 0;
     let mut new_norms = Vec::<f64>::new();
+    let mut ordered_epochnames = Vec::<String>::new();
     eprintln!("values ordered as (index, value, norm, original index, key):");
     for (orgid, s, key) in &to {
         let norm = norms.frq(*orgid as u32);
@@ -176,7 +177,8 @@ pub fn map_diavals(diastructattr: &dyn corp::corp::Attr, epoch_limit: f64)
             diamap[*orgid] = newid;
             newid += 1;
             new_norms.push(norm as f64);
+            ordered_epochnames.push(s.to_string());
         }
     }
-    Ok((diamap, new_norms))
+    Ok((diamap, new_norms, ordered_epochnames))
 }

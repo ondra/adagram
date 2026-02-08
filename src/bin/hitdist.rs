@@ -86,7 +86,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    let (diamap, new_norms) = map_diavals(diastructattr.as_ref(), args.epoch_limit)?;
+    let (diamap, new_norms, _ordered_epochnames) =
+        map_diavals(diastructattr.as_ref(), args.epoch_limit)?;
 
     // diachronic init
     let h = posattr.id_range() as usize;

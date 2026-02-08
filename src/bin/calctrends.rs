@@ -49,7 +49,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else { args.trendbase };
     eprintln!("writing output to {}", trendbase);
 
-    let (diamap, new_norms) = map_diavals(diastructattr.as_ref(), args.epoch_limit)?;
+    let (diamap, new_norms, _ordered_epochnames) =
+        map_diavals(diastructattr.as_ref(), args.epoch_limit)?;
 
     let h = posattr.id_range() as usize;
     let w = new_norms.len();
