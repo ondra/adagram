@@ -12,9 +12,9 @@ struct Args {
     /// adagram model path
     model: String,
 
-    /// normalize vectors before querying neighbors
+    /// do not normalize vectors before querying neighbors
     #[clap(long, default_value_t = false)]
-    norm: bool,
+    no_norm: bool,
 
     /// minimum frequency of candidate neighbors
     #[clap(long, default_value_t = 5usize)]
@@ -35,8 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // load model
     let (mut vm, id2str) = VectorModel::load_model(&args.model)?;
 
-    let norm = args.norm || std::env::var("NORM").is_ok();
-    if norm {
+    if !args.no_norm {
         vm.norm();
     }
     let vm = vm;  // drop mut
