@@ -1,9 +1,7 @@
 use adagram::adagram::VectorModel;
-use adagram::common::expected_pi;
 use adagram::nn::nearest_mmul;
 
 use clap::Parser;
-use ndarray::prelude::*;
 
 const VERSION: &str = git_version::git_version!(args=["--tags", "--always", "--dirty"]);
 
@@ -45,7 +43,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         vm.norm();
     }
     let vm = vm;  // drop mut
-    let mut z = Array::<f64, Ix1>::zeros(vm.nmeanings());
 
     // build reverse lexicon mapping
     let mut str2id = std::collections::HashMap::<&str, u32>::with_capacity(id2str.len());
@@ -72,12 +69,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             None => { eprintln!("Warning: skipping {} not in lexicon", head); continue },
         };
 
-        let _n_senses = expected_pi(&vm.counts, vm.alpha, head_id, &mut z, args.minprob);
-        let hvs = nearest_mmul(&vm, head_id as usize, args.neighbors.saturating_add(1), args.minfreq);
-        for (sense, hv) in hvs.iter().enumerate() {
-            if z[sense] < args.minprob {
-                continue;
-            }
+        let hvs = nearest_mmul(&vm, head_id as usize, args.neighbors.saturating_add(1), args.minfreq, args.minprob);
+        for (sense, hv) in hvs.iter() {
             let filtered = hv.iter()
                 .filter(|(i, _j, _sim)| *i as usize != head_id as usize)
                 .take(args.neighbors)

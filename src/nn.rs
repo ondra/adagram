@@ -1,6 +1,7 @@
 use binary_heap_plus::BinaryHeap;
 use ndarray::prelude::*;
 use crate::adagram::VectorModel; 
+use crate::common::expected_pi;
 
 fn norm_l2<S, D>(a: &ArrayBase<S, D>) -> f32
     where
@@ -101,14 +102,10 @@ fn norm_l2v<D>(a: ArrayView<'_, f32, D>) -> f32
     a.fold(0.0, |l, r| l + *r**r).sqrt()
 }
 
-pub fn nearest_mmul(vm: &VectorModel, head_id: usize, top_k: usize, min_count: usize) -> Vec<Vec<(u32, u32, f32)>>
+pub fn nearest_mmul(vm: &VectorModel, head_id: usize, top_k: usize, min_count: usize, min_prob: f64) -> Vec<(usize, Vec<(u32, u32, f32)>)>
 {
     let ii = vm.in_vecs.len_of(Axis(0));
     let jj = vm.in_vecs.len_of(Axis(1));
-
-    let qvecs_r = vm.in_vecs.slice(s![head_id, .., ..]);
-    let qnorms = qvecs_r.map_axis(Axis(1), norm_l2v);
-    let qvecs = qvecs_r.to_owned() / qnorms.insert_axis(Axis(1));
 
     let sf = |(_id1, _s1, sim1): &(u32, u32, f32), (_id2, _s2, sim2): &(u32, u32, f32)| {
         sim2.partial_cmp(sim1).unwrap_or_else(
@@ -121,34 +118,46 @@ pub fn nearest_mmul(vm: &VectorModel, head_id: usize, top_k: usize, min_count: u
         )
     };
 
-    let mut heaps: Vec<_> =
-        (0..jj).map(|_i| BinaryHeap::new_by(sf)).collect();
+    let mut pi = Array::<f64, Ix1>::zeros(jj);
+    let _n_senses = expected_pi(&vm.counts, vm.alpha, head_id as u32, &mut pi, min_prob);
+    let senses: Vec<_> = pi.iter().enumerate().filter_map(|(sense, prob)| if *prob >= min_prob { Some(sense) } else { None }).collect();
+    if senses.is_empty() {
+        return vec![];
+    }
+
+    let qvecs_r = vm.in_vecs.slice(s![head_id, .., ..]).select(Axis(0), &senses);
+    let qnorms = qvecs_r.map_axis(Axis(1), norm_l2v);
+    let qvecs = qvecs_r / qnorms.insert_axis(Axis(1));
+
+    let mut heaps: Vec<_> = (0..senses.len()).map(|_i| BinaryHeap::new_by(sf)).collect();
 
     if vm.normed {
         for i in 0..ii { for j in 0..jj {
+            if vm.counts[[i, j]] < min_count as f32 { continue; }
             let v = vm.in_vecs.slice(s![i, j, ..]);
             let sim = qvecs.dot(&v);
-            for qj in 0..jj {
-                if vm.counts[[i, j]] < min_count as f32 { continue; }
+            for qj in 0..senses.len() {
                 heaps[qj].push((i as u32, j as u32, sim[qj]));
                 if heaps[qj].len() > top_k { heaps[qj].pop(); }
             }
         }}
     } else {
         for i in 0..ii { for j in 0..jj {
+            if vm.counts[[i, j]] < min_count as f32 { continue; }
             let v = vm.in_vecs.slice(s![i, j, ..]);
             let sim = qvecs.dot(&v) / norm_l2(&v);
-            for qj in 0..jj {
-                if vm.counts[[i, j]] < min_count as f32 { continue; }
+            for qj in 0..senses.len() {
                 heaps[qj].push((i as u32, j as u32, sim[qj]));
                 if heaps[qj].len() > top_k { heaps[qj].pop(); }
             }
         }}
     }
 
-    let hvs: Vec<_> = heaps.iter_mut().map(|heap| {
-        let mut hv: Vec<_> = heap.drain().collect();
-        hv.sort_by(sf); hv
-    }).collect();
+    let hvs: Vec<_> = senses.into_iter().zip(heaps.iter_mut()).map(|(sense, heap)| {
+            let mut hv: Vec<_> = heap.drain().collect();
+            hv.sort_by(sf);
+            (sense, hv)
+        })
+        .collect();
     hvs
 }
