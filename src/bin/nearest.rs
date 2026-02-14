@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     eprintln!("ready");
     if args.compact {
-        println!("hw\tnn\tminsim\tmaxsim");
+        println!("hw\tsn\tnn\tminsim\tmaxsim");
     } else {
         println!("hw\tsn\tsim\tnn\tnn_sn");
     }
@@ -78,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .join(" ");
                 let sim_upper = filtered.first().map(|(_, _, sim)| *sim).unwrap_or(0.0);
                 let sim_lower = filtered.last().map(|(_, _, sim)| *sim).unwrap_or(0.0);
-                println!("{}\t{}\t{}\t{}", head, neighbors, sim_lower, sim_upper);
+                println!("{}\t{}\t{}\t{}\t{}", head, sense, neighbors, sim_lower, sim_upper);
             } else {
                 for (i, j, sim) in filtered {
                     println!("{}\t{}\t{}\t{}\t{}", head, sense, sim, id2str[*i as usize], j);
