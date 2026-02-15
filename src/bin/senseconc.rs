@@ -59,6 +59,10 @@ struct Args {
     /// visit at most the specified amount of concordance lines randomly
     #[clap(long)]
     sampleconc: Option<usize>,
+
+    /// print informative progress messages to stderr
+    #[clap(short, long, default_value_t = false)]
+    verbose: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -70,15 +74,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.nthreads != 0 { tpb.num_threads(args.nthreads) } else { tpb }
         .build_global().unwrap();
 
-    eprintln!("opening attribute {}", &args.posattr);
+    if args.verbose {
+        eprintln!("opening attribute {}", &args.posattr);
+    }
     let posattr = corpus.open_attribute(&args.posattr)?;
 
-    eprintln!("opening attribute {}", &args.word);
+    if args.verbose {
+        eprintln!("opening attribute {}", &args.word);
+    }
     let word = corpus.open_attribute(&args.word)?;
 
     let glue = match &args.glue {
         Some(glue) => {
-            eprintln!("opening structure {}", glue);
+            if args.verbose {
+                eprintln!("opening structure {}", glue);
+            }
             Some(corpus.open_struct(glue)?)
         }
         None => None,
@@ -86,17 +96,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut rng = SmallRng::seed_from_u64(666);
 
-    eprintln!("loading model");
+    if args.verbose {
+        eprintln!("loading model");
+    }
     let (vm, id2str) = VectorModel::load_model(&args.model)?;
     
-    eprintln!("inverting model lexicon");
+    if args.verbose {
+        eprintln!("inverting model lexicon");
+    }
     let mut str2id = std::collections::HashMap::<&str, u32>
         ::with_capacity(id2str.len());
     for (id, word) in id2str.iter().enumerate() {
         str2id.insert(word, id as u32);
     }
 
-    eprintln!("mapping corpus and model lexicon");
+    if args.verbose {
+        eprintln!("mapping corpus and model lexicon");
+    }
     let mut corpid2id = Vec::<u32>::with_capacity(posattr.id_range() as usize);
     for corpid in 0..posattr.id_range() {
         let cval = posattr.id2str(corpid);
@@ -137,7 +153,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let nmeanings = vm.nmeanings() as usize;
 
-    eprintln!("ready");
+    if args.verbose {
+        eprintln!("ready");
+    }
     println!("hw\tsn\tprob\tpos\tlctx\tkw\trctx");
     
     for line in std::io::stdin().lines() {
@@ -250,7 +268,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             })
             .collect();
 
-        eprintln!("sorting senses");
+        if args.verbose {
+            eprintln!("sorting senses");
+        }
         res.sort_by(
                 |(prob1, _maxpos1, _pos1), (prob2, _maxpos2, _pos2)|
                     f64::total_cmp(prob2, prob1)
@@ -298,7 +318,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    eprintln!("done.");
+    if args.verbose {
+        eprintln!("done.");
+    }
     Ok(())
 }
-

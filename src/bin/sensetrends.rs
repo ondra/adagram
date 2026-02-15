@@ -58,6 +58,10 @@ struct Args {
     /// skip positions with a specific attribute value (specify as attribute:value1,2,3,...)
     #[clap(long)]
     skip: Option<String>,
+
+    /// print informative progress messages to stderr
+    #[clap(short, long, default_value_t = false)]
+    verbose: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -69,9 +73,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.nthreads != 0 { tpb.num_threads(args.nthreads) } else { tpb }
         .build_global().unwrap();
 
-    eprintln!("opening attribute {}", &args.posattr);
+    if args.verbose {
+        eprintln!("opening attribute {}", &args.posattr);
+    }
     let posattr = corpus.open_attribute(&args.posattr)?;
-    eprintln!("opening attribute {}", &args.diaattr);
+    if args.verbose {
+        eprintln!("opening attribute {}", &args.diaattr);
+    }
     let diaattrparts = &mut args.diaattr.split('.');
     let diastructname = diaattrparts.next().ok_or("")?;
     let diastructattr = corpus.open_attribute(&args.diaattr)?;
@@ -101,17 +109,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (diamap, new_norms, ordered_epochnames) =
         map_diavals(diastructattr.as_ref(), args.epoch_limit)?;
 
-    eprintln!("loading model");
+    if args.verbose {
+        eprintln!("loading model");
+    }
     let (vm, id2str) = VectorModel::load_model(&args.model)?;
     
-    eprintln!("inverting model lexicon");
+    if args.verbose {
+        eprintln!("inverting model lexicon");
+    }
     let mut str2id = std::collections::HashMap::<&str, u32>
         ::with_capacity(id2str.len());
     for (id, word) in id2str.iter().enumerate() {
         str2id.insert(word, id as u32);
     }
 
-    eprintln!("mapping corpus and model lexicon");
+    if args.verbose {
+        eprintln!("mapping corpus and model lexicon");
+    }
     let mut corpid2id = Vec::<u32>::with_capacity(posattr.id_range() as usize);
     for corpid in 0..posattr.id_range() {
         let cval = posattr.id2str(corpid);
@@ -139,7 +153,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // diachronic init
     let h = posattr.id_range() as usize;
     let epochcnt = new_norms.len();
-    eprintln!("There are {} salient epochs to process.", epochcnt);
+    if args.verbose {
+        eprintln!("There are {} salient epochs to process.", epochcnt);
+    }
 
     if epochcnt < 2 {
         eprintln!("WARNING: fewer than 2 valid structattr values");
@@ -163,7 +179,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("\tnorm");
     }
 
-    eprintln!("ready");
+    if args.verbose {
+        eprintln!("ready");
+    }
     for line in std::io::stdin().lines() {
         {
             let mut sense_diacnts = sense_diacnts.lock().unwrap();
@@ -325,7 +343,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     }
 
-    eprintln!("done.");
+    if args.verbose {
+        eprintln!("done.");
+    }
     Ok(())
 }
-

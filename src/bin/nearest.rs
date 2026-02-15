@@ -31,6 +31,10 @@ struct Args {
     /// compact output: one line per sense with neighbors in a single space-separated column
     #[clap(long, default_value_t = false)]
     compact: bool,
+
+    /// print informative progress messages to stderr
+    #[clap(short, long, default_value_t = false)]
+    verbose: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -50,7 +54,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         str2id.insert(word, id as u32);
     }
 
-    eprintln!("ready");
+    if args.verbose {
+        eprintln!("ready");
+    }
     if args.compact {
         println!("hw\tsn\tnn\tminsim\tmaxsim");
     } else {

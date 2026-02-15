@@ -54,24 +54,35 @@ struct Args {
     /// use uniform prior probabilities for senses
     #[clap(long, default_value_t=false)]
     uniform_prob: bool,
+
+    /// print informative progress messages to stderr
+    #[clap(short, long, default_value_t = false)]
+    verbose: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    eprintln!("loading {}", args.model);
+    if args.verbose {
+        eprintln!("loading {}", args.model);
+    }
     let (vm, id2str) = VectorModel::load_model(&args.model)?;
 
-    eprintln!("building str2id");
+    if args.verbose {
+        eprintln!("building str2id");
+    }
     let mut str2id = std::collections::HashMap::<&str, u32>::with_capacity(id2str.len());
     for (id, word) in id2str.iter().enumerate() {
         str2id.insert(word, id as u32);
     }
-    eprintln!("done");
+    if args.verbose {
+        eprintln!("done");
+    }
 
-    let mut _headword_not_in_lexicon = 0;
+    let mut headword_not_in_lexicon = 0;
     let mut ctx_empty = 0;
     let mut ctx_all_unknown = 0;
+    let mut allok = 0;
 
     let mut z = Array::<f64, Ix1>::zeros(vm.nmeanings());
     let mut lines = std::io::stdin().lines().into_iter();
@@ -151,7 +162,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     outvals.push("nhead".to_string());
                 }
                 emit(outvals);
-                _headword_not_in_lexicon += 1;
+                headword_not_in_lexicon += 1;
                 continue;
             },
         };
@@ -202,6 +213,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if args.print_status { outvals.push("unctx".to_string()); }
             }
         } else {
+            allok += 1;
             if args.print_status { outvals.push("allok".to_string()); }
         }
 
@@ -226,10 +238,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         emit(outvals);
     }
 
-    eprintln!("encountered {} headwords not present in lexicon", _headword_not_in_lexicon);
-    eprintln!("encountered {} lines where no context words were present", ctx_empty);
-    eprintln!("encountered {} lines where no context words were found in lexicon", ctx_all_unknown);
+    if headword_not_in_lexicon > 0 || ctx_empty > 0 || ctx_all_unknown > 0 || allok == 0 {
+        eprintln!("encountered {} headwords not present in lexicon", headword_not_in_lexicon);
+        eprintln!("encountered {} lines where no context words were present", ctx_empty);
+        eprintln!("encountered {} lines where no context words were found in lexicon", ctx_all_unknown);
+    }
 
     Ok(())
 }
-
