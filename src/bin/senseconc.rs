@@ -36,6 +36,10 @@ struct Args {
     #[clap(long,default_value_t=10)]
     window: usize,
 
+    /// number of tokens to output for each concordance context
+    #[clap(long,default_value_t=25)]
+    conctokens: usize,
+
     /// minimum apriori sense probability for the sense to be considered
     #[clap(long,default_value_t=1e-3)]
     sense_threshold: f64,
@@ -54,7 +58,11 @@ struct Args {
 
     /// minimum sense probability for a concordance line
     #[clap(long,default_value_t=0.9)]
-    minprob: f64,
+    minsim: f64,
+
+    /// maximum sense probability for a concordance line
+    #[clap(long,default_value_t=1.0)]
+    maxsim: f64,
 
     /// visit at most the specified amount of concordance lines randomly
     #[clap(long)]
@@ -276,7 +284,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     f64::total_cmp(prob2, prob1)
         );
 
-        let conctokens = 25;
+        let conctokens = args.conctokens;
         let printconc = |pos| {
             let start = if pos >= conctokens as u64 { pos - conctokens as u64 } else { 0 };
             let ctxit = word.iter_ids(start);
@@ -304,7 +312,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             for (_key, mut group) in &res.iter().chunk_by(|(prob, maxpos, _pos)| (prob, maxpos)) {
                 let (prob, maxpos, pos) = group.next().unwrap();
                     if *maxpos == iz {
-                        if *prob >= args.minprob {
+                        if *prob >= args.minsim && *prob <= args.maxsim {
                             found_rows += 1;
                             print!("{}\t{:.5}\t{}\t{}\t", head, *maxpos, *prob, *pos);
                             printconc(*pos);
