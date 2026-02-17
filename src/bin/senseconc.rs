@@ -319,7 +319,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             println!();
                             if found_rows >= args.maxrows { break };
                         } else {
-                            break;
+                            if *prob < args.minsim {
+                                break;
+                            }
                         }
                     }
             }
