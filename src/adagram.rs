@@ -305,3 +305,12 @@ impl VectorModel {
         n_senses
     }
 }
+
+pub fn parse_window(window: Option<usize>, modelpath: &str) -> Option<usize> {
+    window.or(modelpath.split('.').find_map(|part| {
+        part.strip_prefix('w')?
+            .parse::<usize>()
+            .ok()
+            .filter(|&n| n > 0 && n < 100)
+    }))
+}

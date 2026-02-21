@@ -31,8 +31,7 @@ struct Args {
     model: String,
 
     /// window size
-    #[clap(long,default_value_t=10)]
-    window: usize,
+    window: Option<usize>,
 
     /// minimum apriori sense probability for the sense to be considered
     #[clap(long,default_value_t=1e-3)]
@@ -157,7 +156,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         zst.push(RunningStats::new());
     }
 
-    let ntokens = 2*args.window;
+    let window = parse_window(args.window, &args.model).unwrap_or(10);
+    let ntokens = 2 * window;
 
     // diachronic init
     let h = posattr.id_range() as usize;
@@ -294,13 +294,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             for ctx_mid in lctx.iter()
-                    .rev().filter_map(fmap_ids).take(args.window) {
+                    .rev().filter_map(fmap_ids).take(window) {
                 var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path,
                     head_mid, ctx_mid, &mut z);
             }
 
             for ctx_mid in rctx.iter()
-                    .filter_map(fmap_ids).take(args.window) {
+                    .filter_map(fmap_ids).take(window) {
                 var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path,
                     head_mid, ctx_mid, &mut z);
             }
