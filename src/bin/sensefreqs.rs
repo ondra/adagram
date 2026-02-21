@@ -1,11 +1,14 @@
 use clap::Parser;
 
 use ndarray::prelude::*;
+use ndarray_rand::rand::prelude::SmallRng;
+use ndarray_rand::rand::SeedableRng;
 
 use adagram::diachronic::*;
 use adagram::adagram::*;
 use adagram::common::*;
 use adagram::runningstats::RunningStats;
+use adagram::reservoir_sampling::SamplerExt;
 
 use rayon::prelude::*;
 
@@ -58,6 +61,10 @@ struct Args {
     /// skip positions with a specific attribute value (specify as attribute:value1,2,3,...)
     #[clap(long)]
     skip: Option<String>,
+
+    /// visit at most the specified amount of concordance lines randomly
+    #[clap(long)]
+    sampleconc: Option<usize>,
 
     /// print informative progress messages to stderr
     #[clap(short, long, default_value_t = false)]
@@ -143,6 +150,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    let mut rng = SmallRng::seed_from_u64(666);
+
     let mut zst = vec![];
     for _ in 0..vm.nmeanings() {
         zst.push(RunningStats::new());
@@ -210,7 +219,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         let poss = posattr.revidx().id2poss(corpid);
-        let pit = poss.par_bridge().map_init(
+        let poss_sampled = || -> Box<dyn Iterator<Item = u64> + Send> {
+            if let Some(nsamples) = args.sampleconc {
+                if nsamples < poss.len() {
+                    return Box::new(poss.sample(nsamples, &mut rng));
+                }
+            }
+            Box::new(poss)
+        };
+
+        let pit = poss_sampled().par_bridge().map_init(
             || {
                 let lctx = Vec::with_capacity(ntokens);
                 let rctx = Vec::with_capacity(ntokens);
