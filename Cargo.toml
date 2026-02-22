@@ -3,10 +3,14 @@ name = "adagram"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+jemalloc = ["dep:tikv-jemallocator"]
+
 [profile.release]
 debug = true
 
 [dependencies]
+tikv-jemallocator = { version = "0.6", optional = true }
 corp = { path = "../corp" }
 slope = { path = "../slope" }
 spfunc = "0.1.0"
