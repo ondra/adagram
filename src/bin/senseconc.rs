@@ -208,11 +208,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             || {
                 let lctx = Vec::with_capacity(ntokens);
                 let rctx = Vec::with_capacity(ntokens);
-                (lctx, rctx)
+                let z = Array::<f64, Ix1>::zeros(vm.nmeanings());
+                (lctx, rctx, z)
             },
-            |(lctx, rctx), pos|{
-            let mut z = Array::<f64, Ix1>::zeros(vm.nmeanings());
-            let n_senses = expected_pi(&vm.counts, vm.alpha, x, &mut z, args.sense_threshold);
+            |(lctx, rctx, z), pos|{
+            z.fill(0.0);
+            let n_senses = expected_pi(&vm.counts, vm.alpha, x, z, args.sense_threshold);
 
             if args.uniform_prob {
                 for zk in z.iter_mut() {
@@ -251,17 +252,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             for ctx_mid in lctx.iter()
                     .rev().filter_map(fmap_ids).take(args.window) {
                 var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path,
-                    head_mid, ctx_mid, &mut z);
+                    head_mid, ctx_mid, z);
             }
 
             for ctx_mid in rctx.iter()
                     .filter_map(fmap_ids).take(args.window) {
                 var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path,
-                    head_mid, ctx_mid, &mut z);
+                    head_mid, ctx_mid, z);
             }
 
-            exp_normalize(&mut z);
-            Some((z, pos))
+            exp_normalize(z);
+            let maxpos: usize = z.iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.total_cmp(b))
+                .map(|(i, _)| i).unwrap();
+            Some((z[maxpos], maxpos, pos))
         }).flatten();
 
         /*pit.for_each(|(z, pos)|{
@@ -270,6 +275,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });*/
 
+        /*
         let mut res: Vec<_> = pit
             .map(|(z, pos)| {
                 let maxpos: usize = z.iter()
@@ -279,6 +285,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 (z[maxpos], maxpos, pos)
             })
             .collect();
+        */
+        let mut res: Vec<_> = pit.collect();
 
         if args.verbose {
             eprintln!("sorting senses");

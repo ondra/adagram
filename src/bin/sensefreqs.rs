@@ -236,10 +236,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             || {
                 let lctx = Vec::with_capacity(ntokens);
                 let rctx = Vec::with_capacity(ntokens);
-                (lctx, rctx)
+                let z = Array::<f64, Ix1>::zeros(vm.nmeanings());
+                (lctx, rctx, z)
             },
-            |(lctx, rctx), pos|{
-            let mut z = Array::<f64, Ix1>::zeros(vm.nmeanings());
+            |(lctx, rctx, z), pos|{
+            z.fill(0.0);
             let structpos = if let Some(structpos) = diastruct.num_at_pos(pos) {
                 structpos
             } else {
@@ -254,7 +255,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let n_senses = expected_pi(&vm.counts, vm.alpha, x, &mut z, args.sense_threshold);
+            let n_senses = expected_pi(&vm.counts, vm.alpha, x, z, args.sense_threshold);
 
             if args.uniform_prob {
                 for zk in z.iter_mut() {
@@ -300,16 +301,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             for ctx_mid in lctx.iter()
                     .rev().filter_map(fmap_ids).take(window) {
                 var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path,
-                    head_mid, ctx_mid, &mut z);
+                    head_mid, ctx_mid, z);
             }
 
             for ctx_mid in rctx.iter()
                     .filter_map(fmap_ids).take(window) {
                 var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path,
-                    head_mid, ctx_mid, &mut z);
+                    head_mid, ctx_mid, z);
             }
 
-            exp_normalize(&mut z);
+            exp_normalize(z);
 
             if !args.distrib {
                 let maxsense: usize = z.iter()
@@ -321,14 +322,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     z[iz] = if iz == maxsense { 1. } else { 0. };
                 }
             }
-            Some((z, epoch_no))
-        }).flatten();
-        pit.for_each(|(z, epoch_no)|{
-            let mut sense_diacnts = sense_diacnts.lock().unwrap();
-            for iz in 0..z.len() {
-                sense_diacnts[iz*epochcnt + epoch_no as usize] += z[iz];
+            // accumulate directly to avoid cloning z
+            {
+                let mut sense_diacnts = sense_diacnts.lock().unwrap();
+                for iz in 0..z.len() {
+                    sense_diacnts[iz*epochcnt + epoch_no as usize] += z[iz];
+                }
             }
-        });
+            Some(())
+        }).flatten().for_each(|_| {});
         let sense_diacnts = sense_diacnts.lock().unwrap();
 
         for epoch in 0..epochcnt {
