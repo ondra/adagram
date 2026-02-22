@@ -1,5 +1,6 @@
 use adagram::adagram::VectorModel;
 use adagram::nn::nearest_mmul;
+use adagram::nn::{nearest_mmul_dense_pool,build_dense_sense_pool};
 
 use clap::Parser;
 
@@ -35,6 +36,9 @@ struct Args {
     /// print informative progress messages to stderr
     #[clap(short, long, default_value_t = false)]
     verbose: bool,
+
+    #[clap(long, default_value_t = false)]
+    legacy: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -47,6 +51,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         vm.norm();
     }
     let vm = vm;  // drop mut
+
+    let dense_pool = if vm.normed && !args.legacy {
+        if args.verbose {
+            eprintln!("building dense pool (minfreq={})", args.minfreq);
+        }
+        let pool = build_dense_sense_pool(&vm, args.minfreq);
+        if args.verbose {
+            eprintln!("dense pool ready ({} senses)", pool.len());
+        }
+        Some(pool)
+    } else {
+        None
+    };
 
     // build reverse lexicon mapping
     let mut str2id = std::collections::HashMap::<&str, u32>::with_capacity(id2str.len());
@@ -75,7 +92,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             None => { eprintln!("Warning: skipping {} not in lexicon", head); continue },
         };
 
-        let hvs = nearest_mmul(&vm, head_id as usize, args.neighbors.saturating_add(1), args.minfreq, args.minprob);
+        let hvs = match dense_pool.as_ref() {
+            Some(pool) => nearest_mmul_dense_pool(&vm, pool, head_id as usize, args.neighbors.saturating_add(1), args.minprob),
+            None => nearest_mmul(&vm, head_id as usize, args.neighbors.saturating_add(1), args.minfreq, args.minprob),
+        };
         for (sense, hv) in hvs.iter() {
             let filtered = hv.iter()
                 .filter(|(i, _j, _sim)| *i as usize != head_id as usize)
