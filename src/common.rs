@@ -83,13 +83,16 @@ pub fn var_update_z<
     let codes = codes.index_axis(Axis(0), y);
     let paths = paths.index_axis(Axis(0), y);
     let in_vecs_x = in_vecs.index_axis(Axis(0), x);
+    let mut f_buf = Array1::<f32>::zeros(t);
     for (code, path) in std::iter::zip(codes, paths) {
         if *code == u8::MAX { break; }
 
         let out_vec = out_vecs.index_axis(Axis(0), *path as usize);
-        for (k, in_vec) in in_vecs_x.outer_iter().enumerate().take(t) {
-            let f = in_vec.dot(&out_vec) as f64;
-            z[k] += logsigmoid(f * (1. - 2. * (*code as f64)));
+        ndarray::linalg::general_mat_vec_mul(1.0f32, &in_vecs_x, &out_vec, 0.0f32, &mut f_buf);
+
+        let sign = 1.0 - 2.0 * (*code as f64);
+        for (zk, &fk) in z.iter_mut().zip(f_buf.iter()) {
+            *zk += logsigmoid((fk as f64) * sign);
         }
     }
 }
@@ -273,5 +276,3 @@ fn save_model<F>(path: &str, vm: &VectorModel, min_prob: f64, id2word: F)
     
     Ok(())
 }*/
-
-
