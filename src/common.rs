@@ -82,15 +82,14 @@ pub fn var_update_z<
     
     let codes = codes.index_axis(Axis(0), y);
     let paths = paths.index_axis(Axis(0), y);
+    let in_vecs_x = in_vecs.index_axis(Axis(0), x);
     for (code, path) in std::iter::zip(codes, paths) {
         if *code == u8::MAX { break; }
 
-        let out_vec = out_vecs.slice(s![*path as usize, ..]);
-
-        for k in 0..t {
-            let in_vec = in_vecs.slice(s![x, k, ..]);
+        let out_vec = out_vecs.index_axis(Axis(0), *path as usize);
+        for (k, in_vec) in in_vecs_x.outer_iter().enumerate().take(t) {
             let f = in_vec.dot(&out_vec) as f64;
-            z[k] += logsigmoid(f * (1. - 2.*(*code as f64)));
+            z[k] += logsigmoid(f * (1. - 2. * (*code as f64)));
         }
     }
 }
@@ -138,40 +137,42 @@ pub fn in_place_update<
 
     in_grad.fill(0.);    
 
-    let codes = codes.index_axis(Axis(0), y as usize);
-    let paths = paths.index_axis(Axis(0), y as usize);
-    for (code, path) in std::iter::zip(codes, paths) {
-        if *code == u8::MAX { break; }
+    {
+        let in_vecs_view = in_vecs.view();
+        let in_vecs_x = in_vecs_view.index_axis(Axis(0), x);
 
-        //let mut out_vec = vm.out_vecs.slice_mut(s![path, ..]);
-        let mut out_vec = out_vecs.index_axis_mut(Axis(0), *path as usize);
+        let codes = codes.index_axis(Axis(0), y as usize);
+        let paths = paths.index_axis(Axis(0), y as usize);
+        for (code, path) in std::iter::zip(codes, paths) {
+            if *code == u8::MAX { break; }
 
-        out_grad.fill(0.);
+            //let mut out_vec = vm.out_vecs.slice_mut(s![path, ..]);
+            let mut out_vec = out_vecs.index_axis_mut(Axis(0), *path as usize);
 
-        for k in 0..t {
-            if z[k] < sense_threshold { continue; }
-            let in_vec = in_vecs.slice(s![x, k, ..]);
-            let f = out_vec.dot(&in_vec) as f64;
-            
-            pr += z[k] * logsigmoid(f * (1. - 2.*(*code as f64)));
-            let d = 1. - *code as f64 - sigmoid(f);
-            let g = z[k] * lr * d;
+            out_grad.fill(0.);
 
-            for i in 0..m {
-                in_grad[[k, i]] += (g * out_vec[i] as f64) as f32;
-                out_grad[i] += (g * in_vec[i] as f64) as f32;
+            for (k, in_vec) in in_vecs_x.outer_iter().enumerate().take(t) {
+                if z[k] < sense_threshold { continue; }
+                let f = out_vec.dot(&in_vec) as f64;
+                
+                pr += z[k] * logsigmoid(f * (1. - 2. * (*code as f64)));
+                let d = 1. - *code as f64 - sigmoid(f);
+                let g = z[k] * lr * d;
+
+                for i in 0..m {
+                    in_grad[[k, i]] += (g * out_vec[i] as f64) as f32;
+                    out_grad[i] += (g * in_vec[i] as f64) as f32;
+                }
             }
-        }
 
-        for i in 0..m { out_vec[i] += out_grad[i]; }
+            for i in 0..m { out_vec[i] += out_grad[i]; }
+        }
     }
 
-    for k in 0..t {
+    let mut in_vecs_x = in_vecs.index_axis_mut(Axis(0), x);
+    for (k, mut in_vec) in in_vecs_x.outer_iter_mut().enumerate().take(t) {
         if z[k] < sense_threshold { continue; }
-        let mut in_vec = in_vecs.slice_mut(s![x, k, ..]);
-        //let mut in_vecc = vm.in_vecs.index_axis_mut(Axis(0), x);
-        //let mut in_vec = in_vecc.index_axis_mut(Axis(0), k);
-        in_vec += &in_grad.slice(s![k, ..]);
+        in_vec += &in_grad.row(k);
     }
     pr
 }
@@ -272,7 +273,5 @@ fn save_model<F>(path: &str, vm: &VectorModel, min_prob: f64, id2word: F)
     
     Ok(())
 }*/
-
-
 
 
