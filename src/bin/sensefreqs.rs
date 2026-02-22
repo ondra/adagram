@@ -33,7 +33,8 @@ struct Args {
     /// adaptive skip-gram model
     model: String,
 
-    /// window size
+    /// window size (if omitted, inferred from model path; fallback 10)
+    #[clap(long)]
     window: Option<usize>,
 
     /// minimum apriori sense probability for the sense to be considered
