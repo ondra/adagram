@@ -1,12 +1,11 @@
-#[cfg(feature = "jemalloc")]
-#[global_allocator]
-static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+#[path = "../global_alloc.rs"]
+mod global_alloc;
 
 use clap::Parser;
 
 use ndarray::prelude::*;
-use ndarray_rand::rand::prelude::SmallRng;
 use ndarray_rand::rand::SeedableRng;
+use ndarray_rand::rand::prelude::SmallRng;
 
 use adagram::adagram::*;
 use adagram::common::*;
@@ -14,7 +13,7 @@ use adagram::reservoir_sampling::SamplerExt;
 
 use rayon::prelude::*;
 
-const VERSION: &str = git_version::git_version!(args=["--tags", "--always", "--dirty"]);
+const VERSION: &str = git_version::git_version!(args = ["--tags", "--always", "--dirty"]);
 
 /// Assign to senses to concordance lines
 #[derive(Parser, Debug)]
@@ -22,7 +21,7 @@ const VERSION: &str = git_version::git_version!(args=["--tags", "--always", "--d
 struct Args {
     /// corpus
     corpname: String,
-    
+
     /// positional attribute corresponding to sense model used for disambiguation
     posattr: String,
 
@@ -32,40 +31,40 @@ struct Args {
     #[clap(long)]
     /// glue structure to remove extra spaces in text
     glue: Option<String>,
-    
+
     /// adaptive skip-gram model
     model: String,
 
     /// window size
-    #[clap(long,default_value_t=10)]
+    #[clap(long, default_value_t = 10)]
     window: usize,
 
     /// number of tokens to output for each concordance context
-    #[clap(long,default_value_t=25)]
+    #[clap(long, default_value_t = 25)]
     conctokens: usize,
 
     /// minimum apriori sense probability for the sense to be considered
-    #[clap(long,default_value_t=1e-3)]
+    #[clap(long, default_value_t = 1e-3)]
     sense_threshold: f64,
 
     /// use uniform prior probabilities for senses
-    #[clap(long, default_value_t=false)]
+    #[clap(long, default_value_t = false)]
     uniform_prob: bool,
 
     /// number of worker threads to use (0 to use all processors)
-    #[clap(long, default_value_t=0)]
+    #[clap(long, default_value_t = 0)]
     nthreads: usize,
 
     /// how many concordance lines to provide
-    #[clap(long, default_value_t=100)]
+    #[clap(long, default_value_t = 100)]
     maxrows: usize,
 
     /// minimum sense probability for a concordance line
-    #[clap(long,default_value_t=0.9)]
+    #[clap(long, default_value_t = 0.9)]
     minsim: f64,
 
     /// maximum sense probability for a concordance line
-    #[clap(long,default_value_t=1.0)]
+    #[clap(long, default_value_t = 1.0)]
     maxsim: f64,
 
     /// visit at most the specified amount of concordance lines randomly
@@ -81,10 +80,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let corpus = corp::corp::Corpus::open(&args.corpname)?;
 
-    let tpb = rayon::ThreadPoolBuilder::new()
-        .thread_name(|tid| format!("rayon_worker{}", tid));
-    if args.nthreads != 0 { tpb.num_threads(args.nthreads) } else { tpb }
-        .build_global().unwrap();
+    let tpb = rayon::ThreadPoolBuilder::new().thread_name(|tid| format!("rayon_worker{}", tid));
+    if args.nthreads != 0 {
+        tpb.num_threads(args.nthreads)
+    } else {
+        tpb
+    }
+    .build_global()
+    .unwrap();
 
     if args.verbose {
         eprintln!("opening attribute {}", &args.posattr);
@@ -112,12 +115,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("loading model");
     }
     let (vm, id2str) = VectorModel::load_model(&args.model)?;
-    
+
     if args.verbose {
         eprintln!("inverting model lexicon");
     }
-    let mut str2id = std::collections::HashMap::<&str, u32>
-        ::with_capacity(id2str.len());
+    let mut str2id = std::collections::HashMap::<&str, u32>::with_capacity(id2str.len());
     for (id, word) in id2str.iter().enumerate() {
         str2id.insert(word, id as u32);
     }
@@ -135,14 +137,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     assert!(corpid2id.len() == posattr.id_range() as usize);
 
-    let fmap_ids = |corpid: &u32| {
-        match corpid2id[*corpid as usize] {
-            u32::MAX => None,
-            id => Some(id),
-        }
+    let fmap_ids = |corpid: &u32| match corpid2id[*corpid as usize] {
+        u32::MAX => None,
+        id => Some(id),
     };
 
-    let ntokens = 2*args.window;
+    let ntokens = 2 * args.window;
 
     // diachronic init
     //let mut normed = vec![0.0f64; epochcnt];
@@ -169,19 +169,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("ready");
     }
     println!("hw\tsn\tprob\tpos\tlctx\tkw\trctx");
-    
+
     for line in std::io::stdin().lines() {
         let unwrapped = line?;
         let head = unwrapped.trim();
 
         let x = match str2id.get(head) {
-            Some(n) => {
-                *n
-            },
+            Some(n) => *n,
             None => {
                 eprintln!("ERROR: {} not found in model lexicon", head);
                 continue;
-            },
+            }
         };
 
         let head_mid = x;
@@ -193,81 +191,109 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         };
         let poss = posattr.revidx().id2poss(corpid);
-        let poss_sampled = || -> Box<dyn Iterator<Item=u64> + Send> {
+        let poss_sampled = || -> Box<dyn Iterator<Item = u64> + Send> {
             if let Some(nsamples) = args.sampleconc {
                 if nsamples < poss.len() {
-                    return Box::new(
-                        poss.sample(nsamples as usize, &mut rng)
-                    )
+                    return Box::new(poss.sample(nsamples as usize, &mut rng));
                 }
             }
             Box::new(poss)
         };
 
-        let pit = poss_sampled().par_bridge().map_init(
-            || {
-                let lctx = Vec::with_capacity(ntokens);
-                let rctx = Vec::with_capacity(ntokens);
-                let z = Array::<f64, Ix1>::zeros(vm.nmeanings());
-                (lctx, rctx, z)
-            },
-            |(lctx, rctx, z), pos|{
-            z.fill(0.0);
-            let n_senses = expected_pi(&vm.counts, vm.alpha, x, z, args.sense_threshold);
+        let pit = poss_sampled()
+            .par_bridge()
+            .map_init(
+                || {
+                    let lctx = Vec::with_capacity(ntokens);
+                    let rctx = Vec::with_capacity(ntokens);
+                    let z = Array::<f64, Ix1>::zeros(vm.nmeanings());
+                    (lctx, rctx, z)
+                },
+                |(lctx, rctx, z), pos| {
+                    z.fill(0.0);
+                    let n_senses = expected_pi(&vm.counts, vm.alpha, x, z, args.sense_threshold);
 
-            if args.uniform_prob {
-                for zk in z.iter_mut() {
-                    if *zk < args.sense_threshold { *zk = 0.; }
-                    else { *zk = 1. / n_senses as f64; }
-                }
-            } else {
-                for zk in z.iter_mut() {
-                    if *zk < args.sense_threshold { *zk = 0.; }
-                    *zk = zk.ln();
-                }
-            }
+                    if args.uniform_prob {
+                        for zk in z.iter_mut() {
+                            if *zk < args.sense_threshold {
+                                *zk = 0.;
+                            } else {
+                                *zk = 1. / n_senses as f64;
+                            }
+                        }
+                    } else {
+                        for zk in z.iter_mut() {
+                            if *zk < args.sense_threshold {
+                                *zk = 0.;
+                            }
+                            *zk = zk.ln();
+                        }
+                    }
 
-            //eprintln!("{}", pos);
-            //if pos & 0xfff == 0 && Instant::now() >= next_report_time {
-            //    eprintln!("visited {} positions out of {} ({:.2} %)",
-            //        pos, h, 100.*(pos as f64)/(text_size as f64));
-            //    next_report_time += Duration::from_secs(240);
-            //}
-            let start = if pos >= ntokens as u64 { pos - ntokens as u64 } else { 0 };
-            let ctxit = posattr.iter_ids(start);
+                    //eprintln!("{}", pos);
+                    //if pos & 0xfff == 0 && Instant::now() >= next_report_time {
+                    //    eprintln!("visited {} positions out of {} ({:.2} %)",
+                    //        pos, h, 100.*(pos as f64)/(text_size as f64));
+                    //    next_report_time += Duration::from_secs(240);
+                    //}
+                    let start = if pos >= ntokens as u64 {
+                        pos - ntokens as u64
+                    } else {
+                        0
+                    };
+                    let ctxit = posattr.iter_ids(start);
 
-            lctx.clear(); rctx.clear();
-            for (ctxpos, ctx_cid) in std::iter::zip(start.., ctxit) {
-                if ctxpos == pos { continue; }
-                if ctxpos > pos + ntokens as u64 {
-                    break;
-                }
-                if ctxpos < pos {
-                    lctx.push(ctx_cid);
-                } else {
-                    rctx.push(ctx_cid);
-                }
-            }
+                    lctx.clear();
+                    rctx.clear();
+                    for (ctxpos, ctx_cid) in std::iter::zip(start.., ctxit) {
+                        if ctxpos == pos {
+                            continue;
+                        }
+                        if ctxpos > pos + ntokens as u64 {
+                            break;
+                        }
+                        if ctxpos < pos {
+                            lctx.push(ctx_cid);
+                        } else {
+                            rctx.push(ctx_cid);
+                        }
+                    }
 
-            for ctx_mid in lctx.iter()
-                    .rev().filter_map(fmap_ids).take(args.window) {
-                var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path,
-                    head_mid, ctx_mid, z);
-            }
+                    for ctx_mid in lctx.iter().rev().filter_map(fmap_ids).take(args.window) {
+                        var_update_z(
+                            &vm.in_vecs,
+                            &vm.out_vecs,
+                            &vm.code,
+                            &vm.path,
+                            head_mid,
+                            ctx_mid,
+                            z,
+                        );
+                    }
 
-            for ctx_mid in rctx.iter()
-                    .filter_map(fmap_ids).take(args.window) {
-                var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path,
-                    head_mid, ctx_mid, z);
-            }
+                    for ctx_mid in rctx.iter().filter_map(fmap_ids).take(args.window) {
+                        var_update_z(
+                            &vm.in_vecs,
+                            &vm.out_vecs,
+                            &vm.code,
+                            &vm.path,
+                            head_mid,
+                            ctx_mid,
+                            z,
+                        );
+                    }
 
-            exp_normalize(z);
-            let maxpos: usize = z.iter()
-                .enumerate()
-                .max_by(|(_, a), (_, b)| a.total_cmp(b))
-                .map(|(i, _)| i).unwrap();
-            Some((z[maxpos], maxpos, pos))
-        }).flatten();
+                    exp_normalize(z);
+                    let maxpos: usize = z
+                        .iter()
+                        .enumerate()
+                        .max_by(|(_, a), (_, b)| a.total_cmp(b))
+                        .map(|(i, _)| i)
+                        .unwrap();
+                    Some((z[maxpos], maxpos, pos))
+                },
+            )
+            .flatten();
 
         /*pit.for_each(|(z, pos)|{
             for iz in 0..z.len() {
@@ -291,29 +317,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if args.verbose {
             eprintln!("sorting senses");
         }
-        res.sort_by(
-                |(prob1, _maxpos1, _pos1), (prob2, _maxpos2, _pos2)|
-                    f64::total_cmp(prob2, prob1)
-        );
+        res.sort_by(|(prob1, _maxpos1, _pos1), (prob2, _maxpos2, _pos2)| {
+            f64::total_cmp(prob2, prob1)
+        });
 
         let conctokens = args.conctokens;
         let printconc = |pos| {
-            let start = if pos >= conctokens as u64 { pos - conctokens as u64 } else { 0 };
+            let start = if pos >= conctokens as u64 {
+                pos - conctokens as u64
+            } else {
+                0
+            };
             let ctxit = word.iter_ids(start);
             for (ctxpos, conc_cid) in std::iter::zip(start.., ctxit) {
                 if ctxpos > pos + conctokens as u64 {
                     break;
                 }
-                if ctxpos != start { match &glue {
-                    Some(glue) => {
-                        if glue.find_beg(ctxpos) == ctxpos {
-                        } else { print!(" "); }
-                    },
-                    _ => { print!(" ") },
-                }}
-                if ctxpos == pos { print!("\t"); }
+                if ctxpos != start {
+                    match &glue {
+                        Some(glue) => {
+                            if glue.find_beg(ctxpos) == ctxpos {
+                            } else {
+                                print!(" ");
+                            }
+                        }
+                        _ => {
+                            print!(" ")
+                        }
+                    }
+                }
+                if ctxpos == pos {
+                    print!("\t");
+                }
                 print!("{}", word.id2str(conc_cid));
-                if ctxpos == pos { print!("\t"); }
+                if ctxpos == pos {
+                    print!("\t");
+                }
             }
         };
 
@@ -323,19 +362,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut found_rows = 0;
             for (_key, mut group) in &res.iter().chunk_by(|(prob, maxpos, _pos)| (prob, maxpos)) {
                 let (prob, maxpos, pos) = group.next().unwrap();
-                    if *maxpos == iz {
-                        if *prob >= args.minsim && *prob <= args.maxsim {
-                            found_rows += 1;
-                            print!("{}\t{:.5}\t{}\t{}\t", head, *maxpos, *prob, *pos);
-                            printconc(*pos);
-                            println!();
-                            if found_rows >= args.maxrows { break };
-                        } else {
-                            if *prob < args.minsim {
-                                break;
-                            }
+                if *maxpos == iz {
+                    if *prob >= args.minsim && *prob <= args.maxsim {
+                        found_rows += 1;
+                        print!("{}\t{:.5}\t{}\t{}\t", head, *maxpos, *prob, *pos);
+                        printconc(*pos);
+                        println!();
+                        if found_rows >= args.maxrows {
+                            break;
+                        };
+                    } else {
+                        if *prob < args.minsim {
+                            break;
                         }
                     }
+                }
             }
         }
     }

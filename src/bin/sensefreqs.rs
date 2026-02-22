@@ -1,22 +1,21 @@
-#[cfg(feature = "jemalloc")]
-#[global_allocator]
-static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+#[path = "../global_alloc.rs"]
+mod global_alloc;
 
 use clap::Parser;
 
 use ndarray::prelude::*;
-use ndarray_rand::rand::prelude::SmallRng;
 use ndarray_rand::rand::SeedableRng;
+use ndarray_rand::rand::prelude::SmallRng;
 
-use adagram::diachronic::*;
 use adagram::adagram::*;
 use adagram::common::*;
-use adagram::runningstats::RunningStats;
+use adagram::diachronic::*;
 use adagram::reservoir_sampling::SamplerExt;
+use adagram::runningstats::RunningStats;
 
 use rayon::prelude::*;
 
-const VERSION: &str = git_version::git_version!(args=["--tags", "--always", "--dirty"]);
+const VERSION: &str = git_version::git_version!(args = ["--tags", "--always", "--dirty"]);
 
 /// Assign Word Form instances to senses and diachronic epochs
 #[derive(Parser, Debug)]
@@ -24,13 +23,13 @@ const VERSION: &str = git_version::git_version!(args=["--tags", "--always", "--d
 struct Args {
     /// corpus
     corpname: String,
-    
+
     /// positional attribute
     posattr: String,
-    
+
     /// diachronic structure attribute
     diaattr: String,
-    
+
     /// adaptive skip-gram model
     model: String,
 
@@ -38,27 +37,27 @@ struct Args {
     window: Option<usize>,
 
     /// minimum apriori sense probability for the sense to be considered
-    #[clap(long,default_value_t=1e-3)]
+    #[clap(long, default_value_t = 1e-3)]
     sense_threshold: f64,
 
     /// minimum norm for a structure attribute value to be considered
-    #[clap(long,default_value_t=0.15)]
+    #[clap(long, default_value_t = 0.15)]
     epoch_limit: f64,
 
     /// use uniform prior probabilities for senses
-    #[clap(long, default_value_t=false)]
+    #[clap(long, default_value_t = false)]
     uniform_prob: bool,
 
     /// accumulate sense distributions instead of counting the maximal values
-    #[clap(long, default_value_t=false)]
+    #[clap(long, default_value_t = false)]
     distrib: bool,
 
     /// number of worker threads to use (0 to use all processors)
-    #[clap(long, default_value_t=0)]
+    #[clap(long, default_value_t = 0)]
     nthreads: usize,
 
     /// do not print the TSV header as the first line of output
-    #[clap(long, default_value_t=false)]
+    #[clap(long, default_value_t = false)]
     skip_header: bool,
 
     /// skip positions with a specific attribute value (specify as attribute:value1,2,3,...)
@@ -78,10 +77,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let corpus = corp::corp::Corpus::open(&args.corpname)?;
 
-    let tpb = rayon::ThreadPoolBuilder::new()
-        .thread_name(|tid| format!("rayon_worker{}", tid));
-    if args.nthreads != 0 { tpb.num_threads(args.nthreads) } else { tpb }
-        .build_global().unwrap();
+    let tpb = rayon::ThreadPoolBuilder::new().thread_name(|tid| format!("rayon_worker{}", tid));
+    if args.nthreads != 0 {
+        tpb.num_threads(args.nthreads)
+    } else {
+        tpb
+    }
+    .build_global()
+    .unwrap();
 
     if args.verbose {
         eprintln!("opening attribute {}", &args.posattr);
@@ -123,12 +126,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("loading model");
     }
     let (vm, id2str) = VectorModel::load_model(&args.model)?;
-    
+
     if args.verbose {
         eprintln!("inverting model lexicon");
     }
-    let mut str2id = std::collections::HashMap::<&str, u32>
-        ::with_capacity(id2str.len());
+    let mut str2id = std::collections::HashMap::<&str, u32>::with_capacity(id2str.len());
     for (id, word) in id2str.iter().enumerate() {
         str2id.insert(word, id as u32);
     }
@@ -146,11 +148,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     assert!(corpid2id.len() == posattr.id_range() as usize);
 
-    let fmap_ids = |corpid: &u32| {
-        match corpid2id[*corpid as usize] {
-            u32::MAX => None,
-            id => Some(id),
-        }
+    let fmap_ids = |corpid: &u32| match corpid2id[*corpid as usize] {
+        u32::MAX => None,
+        id => Some(id),
     };
 
     let mut rng = SmallRng::seed_from_u64(666);
@@ -181,8 +181,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let nmeanings = vm.nmeanings() as usize;
-                    use std::sync::{Arc, Mutex};
-    let sense_diacnts = Arc::new(Mutex::new(vec![0f64; nmeanings * epochcnt]));
 
     if !args.skip_header {
         print!("hw\tepoch");
@@ -196,21 +194,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("ready");
     }
     for line in std::io::stdin().lines() {
-        {
-            let mut sense_diacnts = sense_diacnts.lock().unwrap();
-            sense_diacnts.iter_mut().for_each(|v| *v = 0.);
-        }
         let unwrapped = line?;
         let head = unwrapped.trim();
 
         let x = match str2id.get(head) {
-            Some(n) => {
-                *n
-            },
+            Some(n) => *n,
             None => {
                 eprintln!("ERROR: {} not found in model lexicon", head);
                 continue;
-            },
+            }
         };
 
         let head_mid = x;
@@ -232,111 +224,148 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Box::new(poss)
         };
 
-        let pit = poss_sampled().par_bridge().map_init(
-            || {
-                let lctx = Vec::with_capacity(ntokens);
-                let rctx = Vec::with_capacity(ntokens);
-                let z = Array::<f64, Ix1>::zeros(vm.nmeanings());
-                (lctx, rctx, z)
-            },
-            |(lctx, rctx, z), pos|{
-            z.fill(0.0);
-            let structpos = if let Some(structpos) = diastruct.num_at_pos(pos) {
-                structpos
-            } else {
-                eprintln!("WARN: position {} for id {} is outside structure", pos, corpid);
-                return None;
-            };
+        let sense_diacnts = poss_sampled()
+            .par_bridge()
+            .fold(
+                || {
+                    let lctx = Vec::with_capacity(ntokens);
+                    let rctx = Vec::with_capacity(ntokens);
+                    let z = Array::<f64, Ix1>::zeros(vm.nmeanings());
+                    let sense_diacnts = vec![0f64; nmeanings * epochcnt];
+                    (lctx, rctx, z, sense_diacnts)
+                },
+                |(mut lctx, mut rctx, mut z, mut sense_diacnts), pos| {
+                    z.fill(0.0);
+                    let structpos = if let Some(structpos) = diastruct.num_at_pos(pos) {
+                        structpos
+                    } else {
+                        eprintln!(
+                            "WARN: position {} for id {} is outside structure",
+                            pos, corpid
+                        );
+                        return (lctx, rctx, z, sense_diacnts);
+                    };
 
-            if let Some((skipattr, skipids)) = &skip {
-                let curskipattrid = skipattr.text().get(structpos);
-                if skipids.contains(&curskipattrid) {
-                    return None;
-                }
-            }
+                    if let Some((skipattr, skipids)) = &skip {
+                        let curskipattrid = skipattr.text().get(structpos);
+                        if skipids.contains(&curskipattrid) {
+                            return (lctx, rctx, z, sense_diacnts);
+                        }
+                    }
 
-            let n_senses = expected_pi(&vm.counts, vm.alpha, x, z, args.sense_threshold);
+                    let n_senses =
+                        expected_pi(&vm.counts, vm.alpha, x, &mut z, args.sense_threshold);
 
-            if args.uniform_prob {
-                for zk in z.iter_mut() {
-                    if *zk < args.sense_threshold { *zk = 0.; }
-                    else { *zk = 1. / n_senses as f64; }
-                }
-            } else {
-                for zk in z.iter_mut() {
-                    if *zk < args.sense_threshold { *zk = 0.; }
-                    *zk = zk.ln();
-                }
-            }
+                    if args.uniform_prob {
+                        for zk in z.iter_mut() {
+                            if *zk < args.sense_threshold {
+                                *zk = 0.;
+                            } else {
+                                *zk = 1. / n_senses as f64;
+                            }
+                        }
+                    } else {
+                        for zk in z.iter_mut() {
+                            if *zk < args.sense_threshold {
+                                *zk = 0.;
+                            }
+                            *zk = zk.ln();
+                        }
+                    }
 
-            let diaid = diastructattr.text().get(structpos);
+                    let diaid = diastructattr.text().get(structpos);
+                    let epoch_no = diamap[diaid as usize];
+                    if epoch_no == u32::MAX {
+                        return (lctx, rctx, z, sense_diacnts);
+                    }
 
-            let epoch_no = diamap[diaid as usize];
-            if epoch_no == u32::MAX {
-                return None;
-            }
+                    //eprintln!("{}", pos);
+                    //if pos & 0xfff == 0 && Instant::now() >= next_report_time {
+                    //    eprintln!("visited {} positions out of {} ({:.2} %)",
+                    //        pos, h, 100.*(pos as f64)/(text_size as f64));
+                    //    next_report_time += Duration::from_secs(240);
+                    //}
+                    let start = if pos >= ntokens as u64 {
+                        pos - ntokens as u64
+                    } else {
+                        0
+                    };
+                    let ctxit = posattr.iter_ids(start);
 
-            //eprintln!("{}", pos);
-            //if pos & 0xfff == 0 && Instant::now() >= next_report_time {
-            //    eprintln!("visited {} positions out of {} ({:.2} %)",
-            //        pos, h, 100.*(pos as f64)/(text_size as f64));
-            //    next_report_time += Duration::from_secs(240);
-            //}
-            let start = if pos >= ntokens as u64 { pos - ntokens as u64 } else { 0 };
-            let ctxit = posattr.iter_ids(start);
+                    lctx.clear();
+                    rctx.clear();
+                    for (ctxpos, ctx_cid) in std::iter::zip(start.., ctxit) {
+                        if ctxpos == pos {
+                            continue;
+                        }
+                        if ctxpos > pos + ntokens as u64 {
+                            break;
+                        }
+                        if ctxpos < pos {
+                            lctx.push(ctx_cid);
+                        } else {
+                            rctx.push(ctx_cid);
+                        }
+                    }
 
-            lctx.clear(); rctx.clear();
-            for (ctxpos, ctx_cid) in std::iter::zip(start.., ctxit) {
-                if ctxpos == pos { continue; }
-                if ctxpos > pos + ntokens as u64 {
-                    break;
-                }
-                if ctxpos < pos {
-                    lctx.push(ctx_cid);
-                } else {
-                    rctx.push(ctx_cid);
-                }
-            }
+                    for ctx_mid in lctx.iter().rev().filter_map(fmap_ids).take(window) {
+                        var_update_z(
+                            &vm.in_vecs,
+                            &vm.out_vecs,
+                            &vm.code,
+                            &vm.path,
+                            head_mid,
+                            ctx_mid,
+                            &mut z,
+                        );
+                    }
 
-            for ctx_mid in lctx.iter()
-                    .rev().filter_map(fmap_ids).take(window) {
-                var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path,
-                    head_mid, ctx_mid, z);
-            }
+                    for ctx_mid in rctx.iter().filter_map(fmap_ids).take(window) {
+                        var_update_z(
+                            &vm.in_vecs,
+                            &vm.out_vecs,
+                            &vm.code,
+                            &vm.path,
+                            head_mid,
+                            ctx_mid,
+                            &mut z,
+                        );
+                    }
 
-            for ctx_mid in rctx.iter()
-                    .filter_map(fmap_ids).take(window) {
-                var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path,
-                    head_mid, ctx_mid, z);
-            }
+                    exp_normalize(&mut z);
 
-            exp_normalize(z);
+                    if !args.distrib {
+                        let maxsense: usize = z
+                            .iter()
+                            .enumerate()
+                            .max_by(|(_, a), (_, b)| a.total_cmp(b))
+                            .map(|(i, _)| i)
+                            .unwrap();
+                        sense_diacnts[maxsense * epochcnt + epoch_no as usize] += 1.0;
+                    } else {
+                        for iz in 0..z.len() {
+                            sense_diacnts[iz * epochcnt + epoch_no as usize] += z[iz];
+                        }
+                    }
 
-            if !args.distrib {
-                let maxsense: usize = z.iter()
-                    .enumerate()
-                    .max_by(|(_, a),(_, b)| a.total_cmp(b))
-                    .map(|(i, _)| i)
-                    .unwrap();
-                for iz in 0..z.len() {
-                    z[iz] = if iz == maxsense { 1. } else { 0. };
-                }
-            }
-            // accumulate directly to avoid cloning z
-            {
-                let mut sense_diacnts = sense_diacnts.lock().unwrap();
-                for iz in 0..z.len() {
-                    sense_diacnts[iz*epochcnt + epoch_no as usize] += z[iz];
-                }
-            }
-            Some(())
-        }).flatten().for_each(|_| {});
-        let sense_diacnts = sense_diacnts.lock().unwrap();
+                    (lctx, rctx, z, sense_diacnts)
+                },
+            )
+            .map(|(_lctx, _rctx, _z, sense_diacnts)| sense_diacnts)
+            .reduce(
+                || vec![0f64; nmeanings * epochcnt],
+                |mut a, b| {
+                    for (ai, bi) in a.iter_mut().zip(b) {
+                        *ai += bi;
+                    }
+                    a
+                },
+            );
 
         for epoch in 0..epochcnt {
             print!("{}\t{}", head, ordered_epochnames[epoch]);
             for sense in 0..nmeanings {
-                print!("\t{}", sense_diacnts[sense*epochcnt + epoch]);
+                print!("\t{}", sense_diacnts[sense * epochcnt + epoch]);
             }
             println!("\t{}", new_norms[epoch]);
         }
@@ -364,7 +393,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (lp, lslope) = adagram::diachronic::linreg(&xs[..], &rel);
         let (mp, mslope) = adagram::diachronic::mk(&xs[..], &rel);
         */
-
     }
 
     if args.verbose {

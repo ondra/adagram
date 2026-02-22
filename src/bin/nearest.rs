@@ -1,10 +1,13 @@
+#[path = "../global_alloc.rs"]
+mod global_alloc;
+
 use adagram::adagram::VectorModel;
 use adagram::nn::nearest_mmul;
-use adagram::nn::{nearest_mmul_dense_pool,build_dense_sense_pool};
+use adagram::nn::{build_dense_sense_pool, nearest_mmul_dense_pool};
 
 use clap::Parser;
 
-const VERSION: &str = git_version::git_version!(args=["--tags", "--always", "--dirty"]);
+const VERSION: &str = git_version::git_version!(args = ["--tags", "--always", "--dirty"]);
 
 /// Retrieve nearest neighbors for a given word sense
 #[derive(Parser, Debug)]
@@ -50,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !args.no_norm {
         vm.norm();
     }
-    let vm = vm;  // drop mut
+    let vm = vm; // drop mut
 
     let dense_pool = if vm.normed && !args.legacy {
         if args.verbose {
@@ -84,34 +87,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut parts = unwrapped.split_whitespace();
         let head = match parts.next() {
             Some(x) => x,
-            None => { continue },
+            None => continue,
         };
 
         let head_id = match str2id.get(head) {
             Some(x) => *x,
-            None => { eprintln!("Warning: skipping {} not in lexicon", head); continue },
+            None => {
+                eprintln!("Warning: skipping {} not in lexicon", head);
+                continue;
+            }
         };
 
         let hvs = match dense_pool.as_ref() {
-            Some(pool) => nearest_mmul_dense_pool(&vm, pool, head_id as usize, args.neighbors.saturating_add(1), args.minprob),
-            None => nearest_mmul(&vm, head_id as usize, args.neighbors.saturating_add(1), args.minfreq, args.minprob),
+            Some(pool) => nearest_mmul_dense_pool(
+                &vm,
+                pool,
+                head_id as usize,
+                args.neighbors.saturating_add(1),
+                args.minprob,
+            ),
+            None => nearest_mmul(
+                &vm,
+                head_id as usize,
+                args.neighbors.saturating_add(1),
+                args.minfreq,
+                args.minprob,
+            ),
         };
         for (sense, hv) in hvs.iter() {
-            let filtered = hv.iter()
+            let filtered = hv
+                .iter()
                 .filter(|(i, _j, _sim)| *i as usize != head_id as usize)
                 .take(args.neighbors)
                 .collect::<Vec<_>>();
             if args.compact {
-                let neighbors = filtered.iter()
+                let neighbors = filtered
+                    .iter()
                     .map(|(i, _j, _sim)| id2str[*i as usize].as_str())
                     .collect::<Vec<_>>()
                     .join(" ");
                 let sim_upper = filtered.first().map(|(_, _, sim)| *sim).unwrap_or(0.0);
                 let sim_lower = filtered.last().map(|(_, _, sim)| *sim).unwrap_or(0.0);
-                println!("{}\t{}\t{}\t{}\t{}", head, sense, neighbors, sim_lower, sim_upper);
+                println!(
+                    "{}\t{}\t{}\t{}\t{}",
+                    head, sense, neighbors, sim_lower, sim_upper
+                );
             } else {
                 for (i, j, sim) in filtered {
-                    println!("{}\t{}\t{}\t{}\t{}", head, sense, sim, id2str[*i as usize], j);
+                    println!(
+                        "{}\t{}\t{}\t{}\t{}",
+                        head, sense, sim, id2str[*i as usize], j
+                    );
                 }
             }
         }

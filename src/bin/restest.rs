@@ -1,3 +1,5 @@
+#[path = "../global_alloc.rs"]
+mod global_alloc;
 
 use adagram::reservoir_sampling::SamplerExt;
 use ndarray_rand::rand::thread_rng;

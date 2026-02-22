@@ -1,6 +1,9 @@
+#[path = "../global_alloc.rs"]
+mod global_alloc;
+
 use clap::Parser;
 
-const VERSION: &str = git_version::git_version!(args=["--tags", "--always", "--dirty"]);
+const VERSION: &str = git_version::git_version!(args = ["--tags", "--always", "--dirty"]);
 
 /// Train an adaptive skip-gram model
 #[derive(Parser, Debug)]
@@ -13,7 +16,7 @@ struct Args {
     attrnames: Vec<String>,
 
     /// number of training threads to run in parallel
-    #[clap(long,default_value_t=1)]
+    #[clap(long, default_value_t = 1)]
     threads: usize,
 }
 
@@ -34,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let words_read = std::sync::atomic::AtomicUsize::new(0);
     let starttime = std::time::Instant::now();
 
-    let trainfunc = | thread_id: usize, | -> std::collections::HashMap<Vec<u32> ,u64> {
+    let trainfunc = |thread_id: usize| -> std::collections::HashMap<Vec<u32>, u64> {
         let mut words_read_last = 0;
         let mut reporttime = std::time::Instant::now();
 
@@ -45,12 +48,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let starttime = std::time::Instant::now();
 
         let mut hm = std::collections::HashMap::new();
-        let mut its = attrs.iter()
+        let mut its = attrs
+            .iter()
             .map(|attr| attr.iter_ids(startpos as u64).take(endpos - 1))
             .collect::<Vec<_>>();
         for pos in 0..partsize {
             if pos & 0xffff == 0xffff {
-                let local_words_read = words_read.fetch_add(0xffff, std::sync::atomic::Ordering::Relaxed);
+                let local_words_read =
+                    words_read.fetch_add(0xffff, std::sync::atomic::Ordering::Relaxed);
                 if thread_id == 0 {
                     let dur = reporttime.elapsed().as_secs_f64();
                     if dur > 0.5 {
@@ -58,20 +63,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         words_read_last = local_words_read;
                         let wps = rws as f64 / dur;
                         let remaining_words = total_words - local_words_read;
-                        let remaining_secs = if wps != 0.0 { remaining_words / wps as usize } else { 0 };
+                        let remaining_secs = if wps != 0.0 {
+                            remaining_words / wps as usize
+                        } else {
+                            0
+                        };
                         let remaining_hours = remaining_secs / 3600;
                         let remaining_mins = (remaining_secs % 3600) / 60;
                         reporttime = std::time::Instant::now();
-                        let elapsed = reporttime.checked_duration_since(starttime).map(|d| d.as_secs()).unwrap_or(0);
-                        eprintln!("\r[{}] visited {} positions out of {} ({:.2} %), {:.0} wps, {:02}h:{:02}m remaining", elapsed,
-                            local_words_read, total_words, local_words_read as f64 / total_words as f64 * 100.0,
-                            wps, remaining_hours, remaining_mins,
+                        let elapsed = reporttime
+                            .checked_duration_since(starttime)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        eprintln!(
+                            "\r[{}] visited {} positions out of {} ({:.2} %), {:.0} wps, {:02}h:{:02}m remaining",
+                            elapsed,
+                            local_words_read,
+                            total_words,
+                            local_words_read as f64 / total_words as f64 * 100.0,
+                            wps,
+                            remaining_hours,
+                            remaining_mins,
                         );
                     }
                 }
             }
-             
-            let out = its.iter_mut().map(|it| it.next().unwrap_or(0)).collect::<Vec<u32>>();
+
+            let out = its
+                .iter_mut()
+                .map(|it| it.next().unwrap_or(0))
+                .collect::<Vec<u32>>();
             *hm.entry(out).or_insert(0) += 1;
         }
         hm
@@ -82,14 +103,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut handles = vec![];
             for thread_id in 0..args.threads {
                 let thread_id_c = thread_id;
-                handles.push(
-                    scope.spawn(move ||
-                        trainfunc(thread_id_c)
-                    )
-                );
+                handles.push(scope.spawn(move || trainfunc(thread_id_c)));
             }
 
-            handles.into_iter()
+            handles
+                .into_iter()
                 .map(|handle| handle.join().unwrap())
                 .collect::<Vec<_>>()
         });
@@ -105,9 +123,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         trainfunc(0)
     };
 
-    eprintln!("read {} words, {} wps",
-              total_words, 
-              total_words as f32 / starttime.elapsed().as_secs() as f32);
+    eprintln!(
+        "read {} words, {} wps",
+        total_words,
+        total_words as f32 / starttime.elapsed().as_secs() as f32
+    );
 
     for (key, value) in res {
         for (attr, k) in std::iter::zip(attrs.iter(), key) {
@@ -119,4 +139,3 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("done");
     Ok(())
 }
-

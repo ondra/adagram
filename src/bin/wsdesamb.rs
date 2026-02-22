@@ -1,9 +1,12 @@
+#[path = "../global_alloc.rs"]
+mod global_alloc;
+
 use clap::Parser;
 
 use ndarray::Array;
 use ndarray::prelude::*;
-use ndarray_rand::rand::prelude::SmallRng;
 use ndarray_rand::rand::SeedableRng;
+use ndarray_rand::rand::prelude::SmallRng;
 
 use adagram::adagram::VectorModel;
 use adagram::common::*;
@@ -13,9 +16,9 @@ use adagram::reservoir_sampling::SamplerExt;
 use corp::wsketch::WMap;
 use corp::wsketch::WSLex;
 
-const VERSION: &str = git_version::git_version!(args=["--tags", "--always", "--dirty"]);
+const VERSION: &str = git_version::git_version!(args = ["--tags", "--always", "--dirty"]);
 
-/// Assign Word Sketches to senses 
+/// Assign Word Sketches to senses
 #[derive(Parser, Debug)]
 #[clap(author, version=VERSION, about)]
 struct Args {
@@ -29,15 +32,15 @@ struct Args {
     model: String,
 
     /// window size, token count on both sides of KWIC used for desambiguation
-    #[clap(long,default_value_t=4)]
+    #[clap(long, default_value_t = 4)]
     window: usize,
 
     /// minimal apriori sense probability
-    #[clap(long,default_value_t=1e-3)]
+    #[clap(long, default_value_t = 1e-3)]
     sense_threshold: f64,
 
-    /// amount of nearest neighbors for sense vectors to retrieve 
-    #[clap(long,default_value_t=6)]
+    /// amount of nearest neighbors for sense vectors to retrieve
+    #[clap(long, default_value_t = 6)]
     sense_neighbors: usize,
 
     /// drop collocates below this rank
@@ -45,22 +48,21 @@ struct Args {
     wsminrnk: f32,
 
     /// drop collocates below this rank
-    #[clap(long,default_value_t=1)]
+    #[clap(long, default_value_t = 1)]
     wsminfrq: u64,
 
     /// ignore a maximal cluster for collocates below this frequency
-    #[clap(long,default_value_t=5)]
+    #[clap(long, default_value_t = 5)]
     clusterminfrq: usize,
 
     /// ignore a maximal cluster for collocates below this probability
-    #[clap(long,default_value_t=0.6)]
+    #[clap(long, default_value_t = 0.6)]
     clusterminprob: f64,
 
     /// visit at most the specified amount of concordance lines randomly
     #[clap(long)]
     sampleconc: Option<u64>,
 }
-
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
@@ -80,8 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (vm, id2str) = VectorModel::load_model(&args.model)?;
 
     eprintln!("inverting model lexicon");
-    let mut str2id = std::collections::HashMap::<&str, u32>
-        ::with_capacity(id2str.len());
+    let mut str2id = std::collections::HashMap::<&str, u32>::with_capacity(id2str.len());
     for (id, word) in id2str.iter().enumerate() {
         str2id.insert(word, id as u32);
     }
@@ -103,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         zst.push(RunningStats::new());
     }
 
-    let ntokens = 2*args.window;
+    let ntokens = 2 * args.window;
     let mut lctx = Vec::<u32>::with_capacity(ntokens);
     let mut rctx = Vec::<u32>::with_capacity(ntokens);
 
@@ -113,7 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for line in std::io::stdin().lines() {
         let unwrapped = line?;
         let head = unwrapped.trim();
-        
+
         let head_cid = if let Some(head_cid) = wslex.head2id(head) {
             head_cid
         } else {
@@ -124,16 +125,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let head_mid = corpid2id[head_cid as usize];
         if head_mid == u32::MAX {
-            eprintln!("ERROR: unable to translate '{}' with WSATTR id {} to model id'", head, head_cid);
-            println!("# ERROR: unable to translate '{}' with WSATTR id {} to model id'", head, head_cid);
+            eprintln!(
+                "ERROR: unable to translate '{}' with WSATTR id {} to model id'",
+                head, head_cid
+            );
+            println!(
+                "# ERROR: unable to translate '{}' with WSATTR id {} to model id'",
+                head, head_cid
+            );
             continue;
         }
 
         let headx = if let Some(headx) = wmap.find_id(head_cid) {
             headx
         } else {
-            eprintln!("ERROR: model and lexicon know '{}', but it is not present in word sketch", head);
-            println!("# ERROR: model and lexicon know '{}', but it is not present in word sketch", head);
+            eprintln!(
+                "ERROR: model and lexicon know '{}', but it is not present in word sketch",
+                head
+            );
+            println!(
+                "# ERROR: model and lexicon know '{}', but it is not present in word sketch",
+                head
+            );
             continue;
         };
 
@@ -141,16 +154,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let nsenses = vm.in_vecs.len_of(Axis(1));
 
-        for i in 0..nsenses { 
-            let r = nearest(&vm, head_mid as usize, i,
-                            args.sense_neighbors, 5);
+        for i in 0..nsenses {
+            let r = nearest(&vm, head_mid as usize, i, args.sense_neighbors, 5);
             print!("# sense {} ({}):", i, vm.counts[[head_mid as usize, i]]);
             for (mid, senseno, sim) in r {
                 print!("\t{}##{}/{:.3}", id2str[mid as usize], senseno, sim);
             }
             println!();
         }
-        
+
         for relx in headx.iter() {
             let rels = wslex.id2rel(relx.id);
 
@@ -160,29 +172,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     continue 'coll;
                 }
 
-                for zk in zst.iter_mut() { (*zk).clear(); }
+                for zk in zst.iter_mut() {
+                    (*zk).clear();
+                }
                 let it = collx.iter();
 
-                let itf = || -> Box<dyn Iterator<Item=(usize, Option<i32>)>> {
+                let itf = || -> Box<dyn Iterator<Item = (usize, Option<i32>)>> {
                     if let Some(nsamples) = args.sampleconc {
                         if nsamples < collx.cnt {
                             rng = SmallRng::seed_from_u64(
-                                ((collx.id as u64) << 10) + (relx.id as u64));
-                            return Box::new(
-                                it.sample(nsamples as usize, &mut rng)
-                            )
+                                ((collx.id as u64) << 10) + (relx.id as u64),
+                            );
+                            return Box::new(it.sample(nsamples as usize, &mut rng));
                         }
                     }
                     Box::new(it)
                 };
 
                 for (pos, _coll) in itf() {
-                    let _n_senses = expected_pi(&vm.counts, vm.alpha,
-                                                head_mid, &mut z, 1e-3f64);
+                    let _n_senses = expected_pi(&vm.counts, vm.alpha, head_mid, &mut z, 1e-3f64);
 
                     for zk in z.iter_mut() {
-                        if *zk < 1e-3 { *zk = 0.; }
-                        *zk = zk.ln();  // ???
+                        if *zk < 1e-3 {
+                            *zk = 0.;
+                        }
+                        *zk = zk.ln(); // ???
                     }
 
                     // let ltokens = std::cmp::min(ntokens as usize, pos as usize);
@@ -191,9 +205,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let start = if pos >= ntokens { pos - ntokens } else { 0 };
                     let ctxit = attr.iter_ids(start as u64);
 
-                    lctx.clear(); rctx.clear();
+                    lctx.clear();
+                    rctx.clear();
                     for (ctxpos, ctx_cid) in std::iter::zip(start.., ctxit) {
-                        if ctxpos == pos { continue; }
+                        if ctxpos == pos {
+                            continue;
+                        }
                         if ctxpos > pos + ntokens {
                             break;
                         }
@@ -207,23 +224,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // let lctx_reversed = (&ctxit).take(ntokens as usize).collect::<Vec<u32>>().iter().rev();
                     // let rctx = (&ctxit).take(ntokens as usize);
 
-                    let fmap_ids = |corpid: &u32| {
-                        match corpid2id[*corpid as usize] {
-                            u32::MAX => None,
-                            id => Some(id),
-                        }
+                    let fmap_ids = |corpid: &u32| match corpid2id[*corpid as usize] {
+                        u32::MAX => None,
+                        id => Some(id),
                     };
 
-                    for ctx_mid in lctx.iter()
-                        .rev().filter_map(fmap_ids).take(args.window) {
-                        var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code,
-                                     &vm.path, head_mid, ctx_mid, &mut z);
+                    for ctx_mid in lctx.iter().rev().filter_map(fmap_ids).take(args.window) {
+                        var_update_z(
+                            &vm.in_vecs,
+                            &vm.out_vecs,
+                            &vm.code,
+                            &vm.path,
+                            head_mid,
+                            ctx_mid,
+                            &mut z,
+                        );
                     }
 
-                    for ctx_mid in rctx.iter()
-                        .filter_map(fmap_ids).take(args.window) {
-                        var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code,
-                                     &vm.path, head_mid, ctx_mid, &mut z);
+                    for ctx_mid in rctx.iter().filter_map(fmap_ids).take(args.window) {
+                        var_update_z(
+                            &vm.in_vecs,
+                            &vm.out_vecs,
+                            &vm.code,
+                            &vm.path,
+                            head_mid,
+                            ctx_mid,
+                            &mut z,
+                        );
                     }
 
                     exp_normalize(&mut z);
@@ -238,26 +265,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     //    .join(" "));
                 }
 
-                print!("{}\t{}\t{}\t{}\t{}\t",
-                       head, rels, colls, collx.cnt, collx.rnk);
+                print!(
+                    "{}\t{}\t{}\t{}\t{}\t",
+                    head, rels, colls, collx.cnt, collx.rnk
+                );
 
                 if collx.lcm.len() >= 2 {
-                    for i in 0..collx.lcm.len()-1 {
+                    for i in 0..collx.lcm.len() - 1 {
                         print!("{}", defattr.id2str(collx.lcm[i] as u32));
-                        if i != collx.lcm.len()-2 {
+                        if i != collx.lcm.len() - 2 {
                             print!(" ");
                         }
                     }
                 }
 
-                let maxpos: Option<usize> = zst.iter()
+                let maxpos: Option<usize> = zst
+                    .iter()
                     .enumerate()
                     .max_by(|(_, a), (_, b)| a.mean().total_cmp(&b.mean()))
                     .map(|(i, _)| i);
 
                 if let Some(mp) = maxpos {
-                    if zst[mp].mean() < args.clusterminprob
-                            || zst[mp].n() < args.clusterminfrq {
+                    if zst[mp].mean() < args.clusterminprob || zst[mp].n() < args.clusterminfrq {
                         print!("\t-");
                     } else {
                         print!("\t{}", mp);
@@ -267,16 +296,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     print!("\t-\t-\t-");
                 }
 
-                print!("\t{}", zst.iter()
-                    .enumerate()
-                    .map(|(i, p): (usize, &RunningStats)| -> String {
-                        format!("{}:{:.2}/{:.2}", i, p.mean(), p.stddev())})
-                    .collect::<Vec<String>>()
-                    .join(" "));
+                print!(
+                    "\t{}",
+                    zst.iter()
+                        .enumerate()
+                        .map(|(i, p): (usize, &RunningStats)| -> String {
+                            format!("{}:{:.2}/{:.2}", i, p.mean(), p.stddev())
+                        })
+                        .collect::<Vec<String>>()
+                        .join(" ")
+                );
                 println!();
             }
         }
-
     }
 
     Ok(())
@@ -293,7 +325,13 @@ struct RunningStats {
 
 impl RunningStats {
     fn new() -> RunningStats {
-        RunningStats { m_n: 0, m_oldm: 0., m_newm: 0., m_olds: 0., m_news: 0. }
+        RunningStats {
+            m_n: 0,
+            m_oldm: 0.,
+            m_newm: 0.,
+            m_olds: 0.,
+            m_news: 0.,
+        }
     }
     fn clear(&mut self) {
         self.m_n = 0;
@@ -308,8 +346,8 @@ impl RunningStats {
             self.m_newm = x;
             self.m_olds = 0.0;
         } else {
-            self.m_newm = self.m_oldm + (x - self.m_oldm)/self.m_n as f64;
-            self.m_news = self.m_olds + (x - self.m_oldm)*(x - self.m_newm);
+            self.m_newm = self.m_oldm + (x - self.m_oldm) / self.m_n as f64;
+            self.m_news = self.m_olds + (x - self.m_oldm) * (x - self.m_newm);
 
             // set up for next iteration
             self.m_oldm = self.m_newm;
@@ -317,12 +355,18 @@ impl RunningStats {
         }
     }
 
-    fn n(&self) -> usize { self.m_n }
+    fn n(&self) -> usize {
+        self.m_n
+    }
     fn mean(&self) -> f64 {
         if self.m_n >= 1 { self.m_newm } else { 0.0 }
     }
     fn var(&self) -> f64 {
-        if self.m_n > 1 { self.m_news/(self.m_n - 1) as f64 } else { 0.0 }
+        if self.m_n > 1 {
+            self.m_news / (self.m_n - 1) as f64
+        } else {
+            0.0
+        }
     }
     fn stddev(&self) -> f64 {
         self.var().sqrt()

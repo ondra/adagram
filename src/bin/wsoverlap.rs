@@ -1,9 +1,12 @@
+#[path = "../global_alloc.rs"]
+mod global_alloc;
+
 use clap::Parser;
 
 use ndarray::Array;
 use ndarray::prelude::*;
-use ndarray_rand::rand::prelude::SmallRng;
 use ndarray_rand::rand::SeedableRng;
+use ndarray_rand::rand::prelude::SmallRng;
 
 use adagram::adagram::VectorModel;
 use adagram::common::*;
@@ -13,11 +16,11 @@ use adagram::reservoir_sampling::SamplerExt;
 use corp::wsketch::WMap;
 use corp::wsketch::WSLex;
 
-use std::collections::{HashMap,HashSet};
+use std::collections::{HashMap, HashSet};
 
-const VERSION: &str = git_version::git_version!(args=["--tags","--always", "--dirty"]);
+const VERSION: &str = git_version::git_version!(args = ["--tags", "--always", "--dirty"]);
 
-/// Assign Word Sketches to senses 
+/// Assign Word Sketches to senses
 #[derive(Parser, Debug)]
 #[clap(author, version=VERSION, about)]
 struct Args {
@@ -31,15 +34,15 @@ struct Args {
     model: String,
 
     /// window size, token count on both sides of KWIC used for desambiguation
-    #[clap(long,default_value_t=4)]
+    #[clap(long, default_value_t = 4)]
     window: usize,
 
     /// minimal apriori sense probability
-    #[clap(long,default_value_t=1e-3)]
+    #[clap(long, default_value_t = 1e-3)]
     sense_threshold: f64,
 
-    /// amount of nearest neighbors for sense vectors to retrieve 
-    #[clap(long,default_value_t=6)]
+    /// amount of nearest neighbors for sense vectors to retrieve
+    #[clap(long, default_value_t = 6)]
     sense_neighbors: usize,
 
     /// drop collocates below this rank
@@ -47,10 +50,9 @@ struct Args {
     wsminrnk: f32,
 
     /// drop collocates below this rank
-    #[clap(long,default_value_t=1)]
+    #[clap(long, default_value_t = 1)]
     wsminfrq: u64,
 }
-
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
@@ -70,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for line in std::io::stdin().lines() {
         let unwrapped = line?;
         let head = unwrapped.trim();
-        
+
         let head_cid = if let Some(head_cid) = wslex.head2id(head) {
             head_cid
         } else {
@@ -81,12 +83,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let headx = if let Some(headx) = wmap.find_id(head_cid) {
             headx
         } else {
-            eprintln!("ERROR: model and lexicon know '{}', but it is not present in word sketch", head);
+            eprintln!(
+                "ERROR: model and lexicon know '{}', but it is not present in word sketch",
+                head
+            );
             continue;
         };
 
         eprintln!("processing {}", head);
-        
+
         let mut hm = HashMap::<(u32, u32), HashSet<usize>>::new();
         //let mut hm = HashMap::new::<(u32, u32), HashSet<u64>>();
 
@@ -98,7 +103,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 //if collx.cnt < args.wsminfrq || collx.rnk < args.wsminrnk {
                 //    continue 'coll;
                 //}
-                let poss = hm.entry((relx.id, collx.id))
+                let poss = hm
+                    .entry((relx.id, collx.id))
                     .or_insert_with(|| HashSet::<usize>::new());
                 poss.extend(collx.iter().map(|(pos, _coll)| pos));
 
@@ -133,7 +139,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 */
             }
         }
-
     }
 
     Ok(())
@@ -150,7 +155,13 @@ struct RunningStats {
 
 impl RunningStats {
     fn new() -> RunningStats {
-        RunningStats { m_n: 0, m_oldm: 0., m_newm: 0., m_olds: 0., m_news: 0. }
+        RunningStats {
+            m_n: 0,
+            m_oldm: 0.,
+            m_newm: 0.,
+            m_olds: 0.,
+            m_news: 0.,
+        }
     }
     fn clear(&mut self) {
         self.m_n = 0;
@@ -165,8 +176,8 @@ impl RunningStats {
             self.m_newm = x;
             self.m_olds = 0.0;
         } else {
-            self.m_newm = self.m_oldm + (x - self.m_oldm)/self.m_n as f64;
-            self.m_news = self.m_olds + (x - self.m_oldm)*(x - self.m_newm);
+            self.m_newm = self.m_oldm + (x - self.m_oldm) / self.m_n as f64;
+            self.m_news = self.m_olds + (x - self.m_oldm) * (x - self.m_newm);
 
             // set up for next iteration
             self.m_oldm = self.m_newm;
@@ -174,12 +185,18 @@ impl RunningStats {
         }
     }
 
-    fn n(&self) -> usize { self.m_n }
+    fn n(&self) -> usize {
+        self.m_n
+    }
     fn mean(&self) -> f64 {
         if self.m_n >= 1 { self.m_newm } else { 0.0 }
     }
     fn var(&self) -> f64 {
-        if self.m_n > 1 { self.m_news/(self.m_n - 1) as f64 } else { 0.0 }
+        if self.m_n > 1 {
+            self.m_news / (self.m_n - 1) as f64
+        } else {
+            0.0
+        }
     }
     fn stddev(&self) -> f64 {
         self.var().sqrt()

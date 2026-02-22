@@ -1,9 +1,9 @@
-use ndarray_rand::rand::prelude::SmallRng;
-use ndarray_rand::rand_distr::Uniform;
-use ndarray_rand::rand_distr::Beta;
 use ndarray_rand::rand::Rng;
+use ndarray_rand::rand::prelude::SmallRng;
+use ndarray_rand::rand_distr::Beta;
 use ndarray_rand::rand_distr::Binomial;
 use ndarray_rand::rand_distr::Distribution;
+use ndarray_rand::rand_distr::Uniform;
 
 pub struct ReservoirSampler<'a, E> {
     rng: &'a mut SmallRng,
@@ -11,10 +11,12 @@ pub struct ReservoirSampler<'a, E> {
     sample_size: usize,
 }
 
-impl <E> ReservoirSampler<'_, E> {
+impl<E> ReservoirSampler<'_, E> {
     pub fn new(sample_size: usize, rng: &'_ mut SmallRng) -> ReservoirSampler<'_, E> {
-        ReservoirSampler { elems: Vec::<E>::with_capacity(sample_size),
-            rng, sample_size,
+        ReservoirSampler {
+            elems: Vec::<E>::with_capacity(sample_size),
+            rng,
+            sample_size,
         }
     }
     pub fn push(&mut self, item: E) {
@@ -26,8 +28,12 @@ impl <E> ReservoirSampler<'_, E> {
             self.elems[r] = item;
         }
     }
-    pub fn clear(&mut self) { self.elems.clear(); }
-    pub fn elems(&self) -> &[E] { self.elems.as_ref() }
+    pub fn clear(&mut self) {
+        self.elems.clear();
+    }
+    pub fn elems(&self) -> &[E] {
+        self.elems.as_ref()
+    }
 }
 
 pub struct ReservoirSamplerG<'a, E: Default, const N: usize> {
@@ -36,9 +42,13 @@ pub struct ReservoirSamplerG<'a, E: Default, const N: usize> {
     c: usize,
 }
 
-impl <'a, E: Default, const N: usize> ReservoirSamplerG<'_, E, { N }> {
+impl<'a, E: Default, const N: usize> ReservoirSamplerG<'_, E, { N }> {
     pub fn new(rng: &'_ mut SmallRng) -> ReservoirSamplerG<'_, E, { N }> {
-        ReservoirSamplerG { elems: core::array::from_fn(|_i| E::default()), rng, c: 0 }
+        ReservoirSamplerG {
+            elems: core::array::from_fn(|_i| E::default()),
+            rng,
+            c: 0,
+        }
     }
     pub fn push(&mut self, item: E) {
         if self.c < N {
@@ -50,14 +60,17 @@ impl <'a, E: Default, const N: usize> ReservoirSamplerG<'_, E, { N }> {
             self.elems[r] = item;
         }
     }
-    pub fn clear(&mut self) { self.c = 0; }
-    pub fn elems(&self) -> &[E] { &self.elems[0..self.c] }
+    pub fn clear(&mut self) {
+        self.c = 0;
+    }
+    pub fn elems(&self) -> &[E] {
+        &self.elems[0..self.c]
+    }
 }
 
-
-
 pub struct Sampler<'a, I, R>
-    where R: Rng
+where
+    R: Rng,
 {
     it: I,
     n: isize,
@@ -66,13 +79,13 @@ pub struct Sampler<'a, I, R>
 }
 
 impl<I, R: Rng> Sampler<'_, I, R>
-    where I: ExactSizeIterator
+where
+    I: ExactSizeIterator,
 {
     fn from_iter(it: I, k: usize, rng: &'_ mut R) -> Sampler<'_, I, R> {
         let n = it.len() as isize;
         Sampler { it, n, k, rng }
     }
-
 }
 
 // Wikipedia says that to draw a beta-binomial random variate X ~ BetaBin(n, alpha, beta), simply
@@ -93,20 +106,21 @@ impl<I, R: Rng> Sampler<'_, I, R>
 fn _beta_binom(alpha: f64, beta: f64, n: u64, rng: &mut impl Rng) -> u64 {
     let d1 = Beta::new(alpha, beta).expect("Beta distribution");
     let p = d1.sample(rng);
-    let d2 = Binomial::new(n, p).expect("Binomial distribution"); 
+    let d2 = Binomial::new(n, p).expect("Binomial distribution");
     d2.sample(rng)
 }
 
 fn beta_binom1(beta: f64, n: u64, rng: &mut impl Rng) -> u64 {
     let d1 = Uniform::new(0., 1.);
     let s: f64 = d1.sample(rng);
-    let p = 1. - s.powf(1./beta);
-    let d2 = Binomial::new(n, p).expect("Binomial distribution"); 
+    let p = 1. - s.powf(1. / beta);
+    let d2 = Binomial::new(n, p).expect("Binomial distribution");
     d2.sample(rng)
 }
 
 impl<T, I: Iterator + Iterator<Item = T>, R> Iterator for Sampler<'_, I, R>
-    where R: Rng, //+ ?Sized
+where
+    R: Rng, //+ ?Sized
 {
     type Item = T;
     fn next(&mut self) -> Option<Self::Item> {
@@ -114,8 +128,11 @@ impl<T, I: Iterator + Iterator<Item = T>, R> Iterator for Sampler<'_, I, R>
             None
         } else {
             let nskip = beta_binom1(
-            // let nskip = beta_binom(1.,
-                self.k as f64, (self.n as usize - self.k) as u64, self.rng);
+                // let nskip = beta_binom(1.,
+                self.k as f64,
+                (self.n as usize - self.k) as u64,
+                self.rng,
+            );
             for _ in 0..nskip {
                 self.it.next();
             }
@@ -126,12 +143,10 @@ impl<T, I: Iterator + Iterator<Item = T>, R> Iterator for Sampler<'_, I, R>
     }
 }
 
-pub trait SamplerExt<'a, T, R: Rng>: ExactSizeIterator<Item = T> + Sized 
-{
+pub trait SamplerExt<'a, T, R: Rng>: ExactSizeIterator<Item = T> + Sized {
     fn sample(self, k: usize, rng: &'a mut R) -> Sampler<'a, Self, R> {
         Sampler::from_iter(self, k, rng)
     }
 }
 
-impl <T, I: ExactSizeIterator<Item = T>, R: Rng> SamplerExt<'_, T, R> for I
-{} 
+impl<T, I: ExactSizeIterator<Item = T>, R: Rng> SamplerExt<'_, T, R> for I {}

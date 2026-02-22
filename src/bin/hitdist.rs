@@ -1,6 +1,5 @@
-#[cfg(feature = "jemalloc")]
-#[global_allocator]
-static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+#[path = "../global_alloc.rs"]
+mod global_alloc;
 
 use clap::Parser;
 
@@ -8,7 +7,7 @@ use adagram::diachronic::*;
 
 use rayon::prelude::*;
 
-const VERSION: &str = git_version::git_version!(args=["--tags", "--always", "--dirty"]);
+const VERSION: &str = git_version::git_version!(args = ["--tags", "--always", "--dirty"]);
 
 /// Assign Word Sketches to senses
 #[derive(Parser, Debug)]
@@ -16,25 +15,25 @@ const VERSION: &str = git_version::git_version!(args=["--tags", "--always", "--d
 struct Args {
     /// corpus
     corpname: String,
-    
+
     /// positional attribute
     posattr: String,
-    
+
     /// diachronic structure attribute
     diaattr: String,
 
     /// text type structure attribute
     typeattr: String,
-    
-    #[clap(long,default_value_t=5)]
+
+    #[clap(long, default_value_t = 5)]
     minfreq: usize,
 
     /// minimum norm for a structure attribute value to be considered
-    #[clap(long,default_value_t=0.15)]
+    #[clap(long, default_value_t = 0.15)]
     epoch_limit: f64,
 
     /// number of worker threads to use (0 to use all processors)
-    #[clap(long, default_value_t=0)]
+    #[clap(long, default_value_t = 0)]
     nthreads: usize,
 
     /// skip positions with a specific attribute value (specify as attribute:value1,2,3,...)
@@ -46,10 +45,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let corpus = corp::corp::Corpus::open(&args.corpname)?;
 
-    let tpb = rayon::ThreadPoolBuilder::new()
-        .thread_name(|tid| format!("rayon_worker{}", tid));
-    if args.nthreads != 0 { tpb.num_threads(args.nthreads) } else { tpb }
-        .build_global().unwrap();
+    let tpb = rayon::ThreadPoolBuilder::new().thread_name(|tid| format!("rayon_worker{}", tid));
+    if args.nthreads != 0 {
+        tpb.num_threads(args.nthreads)
+    } else {
+        tpb
+    }
+    .build_global()
+    .unwrap();
 
     eprintln!("opening attribute {}", &args.posattr);
     let posattr = corpus.open_attribute(&args.posattr)?;
@@ -108,11 +111,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("semantic error".into());
     }
 
-    use std::sync::{Arc,Mutex};
+    use std::sync::{Arc, Mutex};
     let sense_diacnts = Arc::new(Mutex::new(vec![0f64; ntype as usize * epochcnt]));
 
     eprintln!("ready");
-    if true { // tsv
+    if true {
+        // tsv
         println!("hw\ttt\tnorm\ttotal");
     }
     for line in std::io::stdin().lines() {
@@ -131,68 +135,83 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         let poss = posattr.revidx().id2poss(corpid);
-        let pit = poss.par_bridge().map_init(
-            || {
+        let pit = poss
+            .par_bridge()
+            .map_init(
+                || {},
+                |(), pos| {
+                    let diastructpos = if let Some(diastructpos) = diastruct.num_at_pos(pos) {
+                        diastructpos
+                    } else {
+                        eprintln!(
+                            "WARN: position {} for id {} is outside structure",
+                            pos, corpid
+                        );
+                        return None;
+                    };
 
-            },
-            |(), pos|{
-            let diastructpos = if let Some(diastructpos) = diastruct.num_at_pos(pos) {
-                diastructpos
-            } else {
-                eprintln!("WARN: position {} for id {} is outside structure", pos, corpid);
-                return None;
-            };
+                    let diaid = diastructattr.text().get(diastructpos);
+                    let epoch_no = diamap[diaid as usize];
+                    if epoch_no == u32::MAX {
+                        return None;
+                    }
 
-            let diaid = diastructattr.text().get(diastructpos);
-            let epoch_no = diamap[diaid as usize];
-            if epoch_no == u32::MAX {
-                return None;
-            }
+                    if let Some((skipattr, skipids)) = &skip {
+                        let curskipattrid = skipattr.text().get(diastructpos);
+                        if skipids.contains(&curskipattrid) {
+                            return None;
+                        }
+                    }
 
-            if let Some((skipattr, skipids)) = &skip {
-                let curskipattrid = skipattr.text().get(diastructpos);
-                if skipids.contains(&curskipattrid) {
-                    return None;
-                }
-            }
+                    let typestructpos = if let Some(typestructpos) = typestruct.num_at_pos(pos) {
+                        typestructpos
+                    } else {
+                        eprintln!(
+                            "WARN: position {} for id {} is outside structure",
+                            pos, corpid
+                        );
+                        return None;
+                    };
 
-            let typestructpos = if let Some(typestructpos) = typestruct.num_at_pos(pos) {
-                typestructpos
-            } else {
-                eprintln!("WARN: position {} for id {} is outside structure", pos, corpid);
-                return None;
-            };
+                    let typeid = typestructattr.text().get(typestructpos);
 
-            let typeid = typestructattr.text().get(typestructpos);
+                    // let ctxit = posattr.iter_ids(start);
 
-            // let ctxit = posattr.iter_ids(start);
-
-            Some((typeid, epoch_no))
-        }).flatten();
-        pit.for_each(|(typeid, epoch_no)|{
+                    Some((typeid, epoch_no))
+                },
+            )
+            .flatten();
+        pit.for_each(|(typeid, epoch_no)| {
             let mut sense_diacnts = sense_diacnts.lock().unwrap();
-            sense_diacnts[typeid as usize*epochcnt + epoch_no as usize] += 1.;
+            sense_diacnts[typeid as usize * epochcnt + epoch_no as usize] += 1.;
         });
         let sense_diacnts = sense_diacnts.lock().unwrap();
 
         let freqs = (0..epochcnt)
-            .map(|epoch|
-                (0..ntype).map(|type_| sense_diacnts[type_ as usize*epochcnt + epoch]).sum()
-            ).collect::<Vec<f64>>();
+            .map(|epoch| {
+                (0..ntype)
+                    .map(|type_| sense_diacnts[type_ as usize * epochcnt + epoch])
+                    .sum()
+            })
+            .collect::<Vec<f64>>();
 
         let types = (0..ntype)
-            .map(|type_|
-                (0..epochcnt).map(|epoch| sense_diacnts[type_ as usize*epochcnt + epoch]).sum()
-            ).collect::<Vec<f64>>();
+            .map(|type_| {
+                (0..epochcnt)
+                    .map(|epoch| sense_diacnts[type_ as usize * epochcnt + epoch])
+                    .sum()
+            })
+            .collect::<Vec<f64>>();
 
-        if false { // print block format
+        if false {
+            // print block format
             println!("HW {}", head);
             for type_ in 0..ntype as usize {
                 print!("t##{}", type_);
                 print!("\t{}", typenorms.frq(type_ as u32));
                 print!("\t{}", types[type_]);
                 for epoch in 0..epochcnt {
-                    print!("\t{}", sense_diacnts[type_ as usize*epochcnt + epoch]);
+                    print!("\t{}", sense_diacnts[type_ as usize * epochcnt + epoch]);
                 }
                 println!();
             }
@@ -206,9 +225,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 print!("\t{}", new_norms[epoch]);
             }
             println!();
-        } else { // print tsv, only texttype data
+        } else {
+            // print tsv, only texttype data
             for type_ in 0..ntype as usize {
-                println!("{}\t{}\t{}\t{}", head, type_, typenorms.frq(type_ as u32), types[type_]);
+                println!(
+                    "{}\t{}\t{}\t{}",
+                    head,
+                    type_,
+                    typenorms.frq(type_ as u32),
+                    types[type_]
+                );
             }
         }
 
@@ -231,10 +257,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (lp, lslope) = adagram::diachronic::linreg(&xs[..], &rel);
         let (mp, mslope) = adagram::diachronic::mk(&xs[..], &rel);
         */
-
     }
 
     eprintln!("done.");
     Ok(())
 }
-

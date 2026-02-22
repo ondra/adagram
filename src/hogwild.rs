@@ -1,7 +1,6 @@
 // Licensed as MIT or Apache-2.0 licenses
 // https://github.com/finalfusion/finalfrontier
 
-
 use std::cell::UnsafeCell;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
@@ -32,14 +31,14 @@ impl<A, D> HogwildArray<A, D> {
     }
 }
 
-impl<A, D> std::convert::AsRef<Array<A,D>> for HogwildArray<A, D> {
+impl<A, D> std::convert::AsRef<Array<A, D>> for HogwildArray<A, D> {
     fn as_ref(&self) -> &Array<A, D> {
         let ptr = self.0.as_ref().get();
         unsafe { &*ptr }
     }
 }
 
-impl<A, D> std::convert::AsMut<Array<A,D>> for HogwildArray<A, D> {
+impl<A, D> std::convert::AsMut<Array<A, D>> for HogwildArray<A, D> {
     fn as_mut(&mut self) -> &mut Array<A, D> {
         let ptr = self.0.as_ref().get();
         unsafe { &mut *ptr }

@@ -1,39 +1,39 @@
+#[path = "../global_alloc.rs"]
+mod global_alloc;
+
 use clap::Parser;
 
 use ndarray::prelude::*;
 
 use adagram::adagram::VectorModel;
-use adagram::nn::sim;
 use adagram::nn::nearest;
+use adagram::nn::sim;
 
-const VERSION: &str = git_version::git_version!(args=["--tags", "--always", "--dirty"]);
+const VERSION: &str = git_version::git_version!(args = ["--tags", "--always", "--dirty"]);
 
 /// Induce hierarchy on senses
 #[derive(Parser, Debug)]
 #[clap(author, version=VERSION, about)]
 struct Args {
-//    /// word sketch corpus
-//    corpname: String,
+    //    /// word sketch corpus
+    //    corpname: String,
 
-//    /// attribute to use, should be compatible with the attribute used to train the model
-//    attrname: String,
-
+    //    /// attribute to use, should be compatible with the attribute used to train the model
+    //    attrname: String,
     /// adaptive skip-gram model
     model: String,
 
-//    /// window size, token count on both sides of KWIC used for desambiguation
-//    #[clap(long,default_value_t=4)]
-//    window: usize,
-
+    //    /// window size, token count on both sides of KWIC used for desambiguation
+    //    #[clap(long,default_value_t=4)]
+    //    window: usize,
     /// minimal apriori sense probability
-    #[clap(long,default_value_t=1e-3)]
+    #[clap(long, default_value_t = 1e-3)]
     sense_threshold: f64,
 
-    /// amount of nearest neighbors for sense vectors to retrieve 
-    #[clap(long,default_value_t=6)]
+    /// amount of nearest neighbors for sense vectors to retrieve
+    #[clap(long, default_value_t = 6)]
     sense_neighbors: usize,
 }
-
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
@@ -41,8 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (vm, id2str) = VectorModel::load_model(&args.model)?;
 
     eprintln!("inverting model lexicon");
-    let mut str2id = std::collections::HashMap::<&str, u32>
-            ::with_capacity(id2str.len());
+    let mut str2id = std::collections::HashMap::<&str, u32>::with_capacity(id2str.len());
     for (id, word) in id2str.iter().enumerate() {
         str2id.insert(word, id as u32);
     }
@@ -66,11 +65,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut neighbors = Vec::<Vec<(u32, u32, f32)>>::new();
 
-        for i in 0..nsenses { 
+        for i in 0..nsenses {
             let r = nearest(&vm, head_mid, i, args.sense_neighbors, 5);
             print!("# sense {} ({}):", i, vm.counts[[head_mid, i]]);
             for (mid, senseno, sim) in &r {
-                if *mid as usize == head_mid && *senseno as usize == i { continue; }
+                if *mid as usize == head_mid && *senseno as usize == i {
+                    continue;
+                }
                 print!("\t{}##{}/{:.3}", id2str[*mid as usize], senseno, sim);
             }
             neighbors.push(r);
@@ -78,26 +79,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         println!();
 
-        for i in 0..nsenses { 
-            if vm.counts[[head_mid, i]] < min_cnt { continue; }
+        for i in 0..nsenses {
+            if vm.counts[[head_mid, i]] < min_cnt {
+                continue;
+            }
             print!("\t#{}", i);
         }
         println!();
 
-        for i in 0..nsenses { 
-            if vm.counts[[head_mid, i]] < min_cnt { continue; }
+        for i in 0..nsenses {
+            if vm.counts[[head_mid, i]] < min_cnt {
+                continue;
+            }
             print!("{}", i);
-            for j in 0..nsenses { 
-                if vm.counts[[head_mid, j]] < min_cnt { continue; }
-                if i == j { print!("\t - "); }
-                else { print!("\t{:.3}", sim(&vm, head_mid, i, head_mid, j)); }
+            for j in 0..nsenses {
+                if vm.counts[[head_mid, j]] < min_cnt {
+                    continue;
+                }
+                if i == j {
+                    print!("\t - ");
+                } else {
+                    print!("\t{:.3}", sim(&vm, head_mid, i, head_mid, j));
+                }
             }
             println!();
         }
 
         let mut nodes = Vec::new();
-        for i in 0..nsenses { 
-            if vm.counts[[head_mid, i]] < min_cnt { continue; }
+        for i in 0..nsenses {
+            if vm.counts[[head_mid, i]] < min_cnt {
+                continue;
+            }
             nodes.push(Node::Leaf(i));
         }
 
@@ -121,9 +133,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let n1 = nodes.remove(i1);
             let n2 = nodes.remove(i2);
 
-            nodes.push(Node::Internal(
-                Box::new(n1), Box::new(n2)
-            ));
+            nodes.push(Node::Internal(Box::new(n1), Box::new(n2)));
         }
 
         let root = &nodes[0];
@@ -131,24 +141,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let sf = |senseno: usize| -> String {
             let mut out = "".to_string();
             for (mid, n_senseno, sim) in neighbors[senseno].iter() {
-                if *mid as usize == head_mid { continue; }
-                out.push_str(&format!(" {}##{}/{:.3}", id2str[*mid as usize], n_senseno, sim));
+                if *mid as usize == head_mid {
+                    continue;
+                }
+                out.push_str(&format!(
+                    " {}##{}/{:.3}",
+                    id2str[*mid as usize], n_senseno, sim
+                ));
             }
             out
         };
 
         fn fmt_node<F>(node: &Node, vm: &VectorModel, head_mid: usize, sf: &F) -> String
-            where F: Fn(usize) -> String
+        where
+            F: Fn(usize) -> String,
         {
             match node {
                 Node::Leaf(ix) => {
                     format!("#{} {}\n", ix, sf(*ix))
-                },
-                Node::Internal(l, r) =>
-                    format!("{:.3}d\n{}{}", node_diameter(vm, head_mid, node),
-                            &indent(&fmt_node(l, vm, head_mid, sf)),
-                            &indent(&fmt_node(r, vm, head_mid, sf)),
-                    )
+                }
+                Node::Internal(l, r) => format!(
+                    "{:.3}d\n{}{}",
+                    node_diameter(vm, head_mid, node),
+                    &indent(&fmt_node(l, vm, head_mid, sf)),
+                    &indent(&fmt_node(r, vm, head_mid, sf)),
+                ),
             }
         }
 
@@ -213,9 +230,13 @@ impl Node {
     }
     fn ids_(&self, v: &mut Vec<usize>) {
         match self {
-            Self::Leaf(id) => { v.push(*id); },
-            Self::Internal(l, r) => { l.ids_(v); r.ids_(v); }
+            Self::Leaf(id) => {
+                v.push(*id);
+            }
+            Self::Internal(l, r) => {
+                l.ids_(v);
+                r.ids_(v);
+            }
         }
     }
 }
-

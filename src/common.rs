@@ -1,6 +1,6 @@
 use ndarray::Array;
-use ndarray::{Data,DataMut};
 use ndarray::prelude::*;
+use ndarray::{Data, DataMut};
 
 use crate::adagram::VectorModel;
 use spfunc::gamma::digamma;
@@ -10,35 +10,53 @@ type F = f64;
 // fn digamma(x: F) -> F { x.ln() - 0.5*x }
 // ^ bad, maybe use https://math.stackexchange.com/a/1446110
 
-pub fn mean_beta(a: F, b: F) -> F { a / (a + b) }
-pub fn meanlog_beta(a: F, b: F) -> F { digamma(a) - digamma(a + b) }
+pub fn mean_beta(a: F, b: F) -> F {
+    a / (a + b)
+}
+pub fn meanlog_beta(a: F, b: F) -> F {
+    digamma(a) - digamma(a + b)
+}
 //fn mean_mirror(a: F, b: F) -> F { mean_beta(b, a) }
-pub fn meanlog_mirror(a: F, b: F) -> F { meanlog_beta(b, a) }
+pub fn meanlog_mirror(a: F, b: F) -> F {
+    meanlog_beta(b, a)
+}
 
-
-pub fn expected_pi<C: Data<Elem=f32>, Z: DataMut<Elem=f64>>
-        (counts: &ArrayBase<C, Ix2>, alpha: f64, w: u32, pi: &mut ArrayBase<Z, Ix1>, min_prob: f64) -> u32 {
+pub fn expected_pi<C: Data<Elem = f32>, Z: DataMut<Elem = f64>>(
+    counts: &ArrayBase<C, Ix2>,
+    alpha: f64,
+    w: u32,
+    pi: &mut ArrayBase<Z, Ix1>,
+    min_prob: f64,
+) -> u32 {
     let nmeanings = counts.len_of(Axis(1));
 
     let mut r = 1.;
     let mut senses = 0;
     let mut ts = counts.slice(s![w as usize, ..]).sum() as f64;
-    
-    for k in 0..nmeanings-1 {
+
+    for k in 0..nmeanings - 1 {
         ts = f64::max(ts - counts[[w as usize, k]] as f64, 0.);
         let a = 1. + counts[[w as usize, k]] as f64;
         let b = alpha + ts;
         pi[k] = mean_beta(a, b) * r;
-        if pi[k] >= min_prob { senses += 1; }
+        if pi[k] >= min_prob {
+            senses += 1;
+        }
         r = f64::max(r - pi[k], 0.)
     }
-    pi[nmeanings-1] = r; 
-    if r >= min_prob { senses += 1; }
+    pi[nmeanings - 1] = r;
+    if r >= min_prob {
+        senses += 1;
+    }
     senses
 }
 
-pub fn var_init_z<C: Data<Elem=f32>, Z: DataMut<Elem=f64>>
-        (counts: &ArrayBase<C, Ix2>, alpha: f64, w: u32, pi: &mut ArrayBase<Z, Ix1>) -> u32 {
+pub fn var_init_z<C: Data<Elem = f32>, Z: DataMut<Elem = f64>>(
+    counts: &ArrayBase<C, Ix2>,
+    alpha: f64,
+    w: u32,
+    pi: &mut ArrayBase<Z, Ix1>,
+) -> u32 {
     let min_prob = 1e-3f64;
 
     let mut r = 0f64;
@@ -48,7 +66,7 @@ pub fn var_init_z<C: Data<Elem=f32>, Z: DataMut<Elem=f64>>
         pi[i] = counts[[w as usize, i]] as f64;
     }
     let mut ts = pi.sum();
-    for k in 0..pi.len()-1 {
+    for k in 0..pi.len() - 1 {
         ts = f64::max(ts - pi[k], 0.);
         let a = 1. + pi[k];
         let b = alpha + ts;
@@ -62,30 +80,46 @@ pub fn var_init_z<C: Data<Elem=f32>, Z: DataMut<Elem=f64>>
         }
     }
     let lp = pi.len();
-    pi[lp-1] = r; 
-    if x >= min_prob { senses += 1; }
+    pi[lp - 1] = r;
+    if x >= min_prob {
+        senses += 1;
+    }
     senses
 }
 
-pub fn sigmoid   (x: f64) -> f64 { 1. / (1.+(-x).exp()) }
-pub fn logsigmoid(x: f64) -> f64 {     -(1.+(-x).exp()).ln() }
+pub fn sigmoid(x: f64) -> f64 {
+    1. / (1. + (-x).exp())
+}
+pub fn logsigmoid(x: f64) -> f64 {
+    -(1. + (-x).exp()).ln()
+}
 
 pub fn var_update_z<
-    I: Data<Elem=f32>, O: Data<Elem=f32>,
-    C: Data<Elem=u8>, P: Data<Elem=u32>>
-        (in_vecs: &ArrayBase<I, Ix3>, out_vecs: &ArrayBase<O, Ix2>,
-         codes: &ArrayBase<C, Ix2>, paths: &ArrayBase<P, Ix2>,
-         x: u32, y: u32, z: &mut Array<f64, Ix1>) {
+    I: Data<Elem = f32>,
+    O: Data<Elem = f32>,
+    C: Data<Elem = u8>,
+    P: Data<Elem = u32>,
+>(
+    in_vecs: &ArrayBase<I, Ix3>,
+    out_vecs: &ArrayBase<O, Ix2>,
+    codes: &ArrayBase<C, Ix2>,
+    paths: &ArrayBase<P, Ix2>,
+    x: u32,
+    y: u32,
+    z: &mut Array<f64, Ix1>,
+) {
     let t = in_vecs.len_of(Axis(1));
     let x = x as usize;
     let y = y as usize;
-    
+
     let codes = codes.index_axis(Axis(0), y);
     let paths = paths.index_axis(Axis(0), y);
     let in_vecs_x = in_vecs.index_axis(Axis(0), x);
     let mut f_buf = Array1::<f32>::zeros(t);
     for (code, path) in std::iter::zip(codes, paths) {
-        if *code == u8::MAX { break; }
+        if *code == u8::MAX {
+            break;
+        }
 
         let out_vec = out_vecs.index_axis(Axis(0), *path as usize);
         ndarray::linalg::general_mat_vec_mul(1.0f32, &in_vecs_x, &out_vec, 0.0f32, &mut f_buf);
@@ -100,16 +134,18 @@ pub fn var_update_z<
 fn _skip_gram(vm: &mut VectorModel, in_vec: &Array<f32, Ix1>, x: u32) -> f64 {
     let x = x as usize;
     let mut pr = 0.;
-    
+
     for n in 0..vm.code.len_of(Axis(1)) {
         let code = vm.code[[x, n]];
         let path = vm.path[[x, n]] as usize;
-        if code == u8::MAX { break; }
+        if code == u8::MAX {
+            break;
+        }
 
         let out_vec = vm.out_vecs.slice(s![path, ..]);
         let f = in_vec.dot(&out_vec) as f64;
 
-        pr += logsigmoid(f * (1. - 2.*(code as f64)));
+        pr += logsigmoid(f * (1. - 2. * (code as f64)));
     }
     pr
 }
@@ -120,25 +156,29 @@ pub fn in_place_update<
     D: ndarray::DataMut<Elem = f32>,
     Z: ndarray::Data<Elem = f64>,
     Cc: ndarray::Data<Elem = f32>,
-
     C: ndarray::Data<Elem = u8>,
     P: ndarray::Data<Elem = u32>,
-    >
-    (in_vecs: &mut ArrayBase<I, Ix3>,
-     out_vecs: &mut ArrayBase<O, Ix2>,
-     counts: &ArrayBase<Cc, Ix2>,
-     x: u32, y: u32, z: &ArrayBase<Z, Ix1>,
-        codes: &ArrayBase<C, Ix2>, paths: &ArrayBase<P, Ix2>,
-                   lr: f64,
-                   in_grad: &mut ArrayBase<D, Ix2>, out_grad: &mut ArrayBase<D, Ix1>,
-                   sense_threshold: f64) -> f64 {
+>(
+    in_vecs: &mut ArrayBase<I, Ix3>,
+    out_vecs: &mut ArrayBase<O, Ix2>,
+    counts: &ArrayBase<Cc, Ix2>,
+    x: u32,
+    y: u32,
+    z: &ArrayBase<Z, Ix1>,
+    codes: &ArrayBase<C, Ix2>,
+    paths: &ArrayBase<P, Ix2>,
+    lr: f64,
+    in_grad: &mut ArrayBase<D, Ix2>,
+    out_grad: &mut ArrayBase<D, Ix1>,
+    sense_threshold: f64,
+) -> f64 {
     let mut pr = 0.;
     let t = counts.len_of(Axis(1));
     let m = in_vecs.len_of(Axis(2));
     let x = x as usize;
     let _y = y as usize;
 
-    in_grad.fill(0.);    
+    in_grad.fill(0.);
 
     {
         let in_vecs_view = in_vecs.view();
@@ -147,7 +187,9 @@ pub fn in_place_update<
         let codes = codes.index_axis(Axis(0), y as usize);
         let paths = paths.index_axis(Axis(0), y as usize);
         for (code, path) in std::iter::zip(codes, paths) {
-            if *code == u8::MAX { break; }
+            if *code == u8::MAX {
+                break;
+            }
 
             //let mut out_vec = vm.out_vecs.slice_mut(s![path, ..]);
             let mut out_vec = out_vecs.index_axis_mut(Axis(0), *path as usize);
@@ -155,9 +197,11 @@ pub fn in_place_update<
             out_grad.fill(0.);
 
             for (k, in_vec) in in_vecs_x.outer_iter().enumerate().take(t) {
-                if z[k] < sense_threshold { continue; }
+                if z[k] < sense_threshold {
+                    continue;
+                }
                 let f = out_vec.dot(&in_vec) as f64;
-                
+
                 pr += z[k] * logsigmoid(f * (1. - 2. * (*code as f64)));
                 let d = 1. - *code as f64 - sigmoid(f);
                 let g = z[k] * lr * d;
@@ -168,28 +212,37 @@ pub fn in_place_update<
                 }
             }
 
-            for i in 0..m { out_vec[i] += out_grad[i]; }
+            for i in 0..m {
+                out_vec[i] += out_grad[i];
+            }
         }
     }
 
     let mut in_vecs_x = in_vecs.index_axis_mut(Axis(0), x);
     for (k, mut in_vec) in in_vecs_x.outer_iter_mut().enumerate().take(t) {
-        if z[k] < sense_threshold { continue; }
+        if z[k] < sense_threshold {
+            continue;
+        }
         in_vec += &in_grad.row(k);
     }
     pr
 }
 
 pub fn var_update_counts<
-        A: ndarray::Data<Elem = u64>,
-        B: ndarray::DataMut<Elem = f32>,
-        C: ndarray::Data<Elem = f64>
+    A: ndarray::Data<Elem = u64>,
+    B: ndarray::DataMut<Elem = f32>,
+    C: ndarray::Data<Elem = f64>,
 >(
-    freqs: &ArrayBase<A, Ix1>, counts: &mut ArrayBase<B, Ix2>, x: u32, local_counts: &ArrayBase<C, Ix1>, lr2: f64)
-{
+    freqs: &ArrayBase<A, Ix1>,
+    counts: &mut ArrayBase<B, Ix2>,
+    x: u32,
+    local_counts: &ArrayBase<C, Ix1>,
+    lr2: f64,
+) {
     for k in 0..counts.len_of(Axis(1)) {
-        counts[[x as usize, k]] += (lr2 *
-            (local_counts[[k]] * freqs[[x as usize]] as f64 - counts[[x as usize, k]] as f64)) as f32;
+        counts[[x as usize, k]] += (lr2
+            * (local_counts[[k]] * freqs[[x as usize]] as f64 - counts[[x as usize, k]] as f64))
+            as f32;
     }
 }
 
@@ -198,7 +251,7 @@ pub fn exp_normalize(x: &mut Array<f64, Ix1>) {
     let mut sum_x = 0f64;
     for e in x.iter_mut() {
         *e = (*e - max_x).exp();
-        sum_x += *e;            
+        sum_x += *e;
     }
     for e in x.iter_mut() {
         *e /= sum_x;
@@ -221,7 +274,7 @@ fn load_dict(path: &str) -> Result<(Vec<u64>, Vec<String>), Box<dyn std::error::
         let l = line.unwrap();
         let parts: Vec<_> = l.split_whitespace().collect();
         if parts.len() != 2 {
-            return Err("too many whitespace separators in dictionary".into());            
+            return Err("too many whitespace separators in dictionary".into());
         }
         let word = parts[0];
         let frq = parts[1].parse::<u64>()?;
@@ -242,7 +295,7 @@ fn save_model<F>(path: &str, vm: &VectorModel, min_prob: f64, id2word: F)
         where F: Fn(u32) -> String{
     let mut vecf = std::io::BufWriter::new(
         std::fs::File::create(path.to_string() + ".txt")?);
-    
+
     let s = vm.in_vecs.shape();
     write!(vecf, "{} {} {}\n", s[0], s[2], s[1])?;
     write!(vecf, "{} {}\n", vm.alpha, 0)?;
@@ -273,6 +326,6 @@ fn save_model<F>(path: &str, vm: &VectorModel, min_prob: f64, id2word: F)
 
     vecf.flush()?;
     std::mem::drop(vecf);
-    
+
     Ok(())
 }*/

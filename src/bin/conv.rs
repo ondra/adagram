@@ -1,6 +1,9 @@
-use ndarray::prelude::*;
+#[path = "../global_alloc.rs"]
+mod global_alloc;
+
 use adagram::adagram::VectorModel;
 use adagram::common::expected_pi;
+use ndarray::prelude::*;
 use std::io::Write;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -15,12 +18,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("target model path does not end with .bvec32");
     }
 
-    let mut bvecf = std::io::BufWriter::new(
-        std::fs::File::create(&tgtmodelpath)?);
-    let mut dicf = std::io::BufWriter::new(
-        std::fs::File::create(tgtmodelpath.to_string() + ".dic")?);
-    let mut cntf = std::io::BufWriter::new(
-        std::fs::File::create(tgtmodelpath.to_string() + ".cnt")?);
+    let mut bvecf = std::io::BufWriter::new(std::fs::File::create(&tgtmodelpath)?);
+    let mut dicf =
+        std::io::BufWriter::new(std::fs::File::create(tgtmodelpath.to_string() + ".dic")?);
+    let mut cntf =
+        std::io::BufWriter::new(std::fs::File::create(tgtmodelpath.to_string() + ".cnt")?);
 
     eprintln!("loading {}", srcmodelpath);
     let (mut vm, id2str) = VectorModel::load_model(&srcmodelpath)?;
@@ -30,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("normalizing vectors");
         vm.norm();
     }
-    let vm = vm;  // drop mut
+    let vm = vm; // drop mut
 
     let min_prob = 0.001;
 
@@ -44,8 +46,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for i in 0..ii {
         let _nsenses = expected_pi(&vm.counts, vm.alpha, i as u32, &mut z, 1e-3f64);
         for j in 0..jj {
-            if z[j] < min_prob { continue; }
-            indices.push((i, j)); 
+            if z[j] < min_prob {
+                continue;
+            }
+            indices.push((i, j));
             zs.insert((i as u32, j as u32), z[j]);
         }
     }
@@ -61,7 +65,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for e in vm.in_vecs.slice(s![i, j, ..]).iter() {
             bvecf.write_all(&e.to_le_bytes())?;
         }
-        writeln!(cntf, "{}##{}\t{}\t{}", id2str[i], j, zs.get(&(i as u32, j as u32)).unwrap(), vm.counts[[i, j]])?;
+        writeln!(
+            cntf,
+            "{}##{}\t{}\t{}",
+            id2str[i],
+            j,
+            zs.get(&(i as u32, j as u32)).unwrap(),
+            vm.counts[[i, j]]
+        )?;
     }
 
     bvecf.flush()?;
@@ -71,4 +82,3 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("done");
     Ok(())
 }
-
