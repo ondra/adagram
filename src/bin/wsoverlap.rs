@@ -3,15 +3,7 @@ mod global_alloc;
 
 use clap::Parser;
 
-use ndarray::Array;
-use ndarray::prelude::*;
-use ndarray_rand::rand::SeedableRng;
-use ndarray_rand::rand::prelude::SmallRng;
 
-use adagram::adagram::VectorModel;
-use adagram::common::*;
-use adagram::nn::nearest;
-use adagram::reservoir_sampling::SamplerExt;
 
 use corp::wsketch::WMap;
 use corp::wsketch::WSLex;
@@ -57,12 +49,12 @@ struct Args {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let corp = corp::corp::Corpus::open(&args.corpname)?;
-    let attr: Box<dyn corp::corp::Attr> = corp.open_attribute(&args.attrname)?;
+    let _attr: Box<dyn corp::corp::Attr> = corp.open_attribute(&args.attrname)?;
 
     let wsattrname = corp.get_conf("WSATTR").unwrap();
     let wsattr = corp.open_attribute(&wsattrname)?;
     let defattrname = corp.get_conf("DEFAULTATTR").unwrap();
-    let defattr = corp.open_attribute(&defattrname)?;
+    let _defattr = corp.open_attribute(&defattrname)?;
 
     let wsbase = corp.get_conf("WSBASE").unwrap();
     let wmap = WMap::new(&wsbase)?;
@@ -96,10 +88,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         //let mut hm = HashMap::new::<(u32, u32), HashSet<u64>>();
 
         for relx in headx.iter() {
-            let rels = wslex.id2rel(relx.id);
+            let _rels = wslex.id2rel(relx.id);
 
             'coll: for collx in relx.iter() {
-                let colls = wslex.id2coll(collx.id);
+                let _colls = wslex.id2coll(collx.id);
                 //if collx.cnt < args.wsminfrq || collx.rnk < args.wsminrnk {
                 //    continue 'coll;
                 //}

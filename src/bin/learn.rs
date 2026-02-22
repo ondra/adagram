@@ -440,7 +440,7 @@ struct DocIter<'a> {
 
 fn dociter<'a>(
     doc: &'a dyn corp::structure::Struct,
-    attr: &'a (dyn corp::corp::Attr),
+    attr: &'a dyn corp::corp::Attr,
     from: usize,
 ) -> DocIter<'a> {
     DocIter {

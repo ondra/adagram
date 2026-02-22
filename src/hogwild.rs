@@ -51,13 +51,13 @@ where
 {
     /// Get an immutable subview of the Hogwild array.
     #[inline]
-    pub fn subview(&self, axis: Axis, index: Ix) -> ArrayView<A, D::Smaller> {
+    pub fn subview(&self, axis: Axis, index: Ix) -> ArrayView<'_, A, D::Smaller> {
         self.as_ref().index_axis(axis, index)
     }
 
     /// Get a mutable subview of the Hogwild array.
     #[inline]
-    pub fn subview_mut(&mut self, axis: Axis, index: Ix) -> ArrayViewMut<A, D::Smaller> {
+    pub fn subview_mut(&mut self, axis: Axis, index: Ix) -> ArrayViewMut<'_, A, D::Smaller> {
         self.as_mut().index_axis_mut(axis, index)
     }
 }
@@ -68,7 +68,7 @@ where
 {
     /// Get an immutable view of the Hogwild array.
     #[inline]
-    pub fn view(&self) -> ArrayView<A, D> {
+    pub fn view(&self) -> ArrayView<'_, A, D> {
         self.as_ref().view()
     }
 }
