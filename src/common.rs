@@ -80,14 +80,15 @@ pub fn var_update_z<
     let x = x as usize;
     let y = y as usize;
     
-    let in_matrix = in_vecs.slice(s![x, .., ..]);
     let codes = codes.index_axis(Axis(0), y);
     let paths = paths.index_axis(Axis(0), y);
-    for k in 0..t {
-        let in_vec = in_matrix.slice(s![k, ..]);
-        for (code, path) in std::iter::zip(codes, paths) {
-            if *code == u8::MAX { break; }
-            let out_vec = out_vecs.slice(s![*path as usize, ..]);
+    for (code, path) in std::iter::zip(codes, paths) {
+        if *code == u8::MAX { break; }
+
+        let out_vec = out_vecs.slice(s![*path as usize, ..]);
+
+        for k in 0..t {
+            let in_vec = in_vecs.slice(s![x, k, ..]);
             let f = in_vec.dot(&out_vec) as f64;
             z[k] += logsigmoid(f * (1. - 2.*(*code as f64)));
         }
