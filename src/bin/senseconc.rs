@@ -35,9 +35,9 @@ struct Args {
     /// adaptive skip-gram model
     model: String,
 
-    /// window size
-    #[clap(long, default_value_t = 10)]
-    window: usize,
+    /// window size (if omitted, inferred from model path; fallback 10)
+    #[clap(long)]
+    window: Option<usize>,
 
     /// number of tokens to output for each concordance context
     #[clap(long, default_value_t = 25)]
@@ -142,7 +142,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         id => Some(id),
     };
 
-    let ntokens = 2 * args.window;
+    let window = parse_window(args.window, &args.model).unwrap_or(10);
+    let ntokens = 2 * window;
 
     // diachronic init
     //let mut normed = vec![0.0f64; epochcnt];
@@ -259,7 +260,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
 
-                    for ctx_mid in lctx.iter().rev().filter_map(fmap_ids).take(args.window) {
+                    for ctx_mid in lctx.iter().rev().filter_map(fmap_ids).take(window) {
                         var_update_z(
                             &vm.in_vecs,
                             &vm.out_vecs,
@@ -271,7 +272,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         );
                     }
 
-                    for ctx_mid in rctx.iter().filter_map(fmap_ids).take(args.window) {
+                    for ctx_mid in rctx.iter().filter_map(fmap_ids).take(window) {
                         var_update_z(
                             &vm.in_vecs,
                             &vm.out_vecs,

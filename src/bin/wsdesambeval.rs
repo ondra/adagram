@@ -8,7 +8,7 @@ use ndarray::prelude::*;
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::prelude::SmallRng;
 
-use adagram::adagram::VectorModel;
+use adagram::adagram::{parse_window, VectorModel};
 use adagram::common::*;
 use adagram::nn::nearest;
 use adagram::reservoir_sampling::SamplerExt;
@@ -33,8 +33,9 @@ struct Args {
     model: String,
 
     /// window size, token count on both sides of KWIC used for desambiguation
-    #[clap(long, default_value_t = 4)]
-    window: usize,
+    /// (if omitted, inferred from model path; fallback 4)
+    #[clap(long)]
+    window: Option<usize>,
 
     /// minimal apriori sense probability
     #[clap(long, default_value_t = 1e-3)]
@@ -105,7 +106,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         zst.push(RunningStats::new());
     }
 
-    let ntokens = 2 * args.window;
+    let window = parse_window(args.window, &args.model).unwrap_or(4);
+    let ntokens = 2 * window;
     let mut lctx = Vec::<u32>::with_capacity(ntokens);
     let mut rctx = Vec::<u32>::with_capacity(ntokens);
 
@@ -224,7 +226,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         id => Some(id),
                     };
 
-                    for ctx_mid in lctx.iter().rev().filter_map(fmap_ids).take(args.window) {
+                    for ctx_mid in lctx.iter().rev().filter_map(fmap_ids).take(window) {
                         var_update_z(
                             &vm.in_vecs,
                             &vm.out_vecs,
@@ -236,7 +238,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         );
                     }
 
-                    for ctx_mid in rctx.iter().filter_map(fmap_ids).take(args.window) {
+                    for ctx_mid in rctx.iter().filter_map(fmap_ids).take(window) {
                         var_update_z(
                             &vm.in_vecs,
                             &vm.out_vecs,
