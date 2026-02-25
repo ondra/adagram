@@ -1,23 +1,59 @@
 use wide::f32x8;
 
 #[inline(always)]
+fn prefix_to_align_32(ptr: *const f32, len: usize) -> usize {
+    const ALIGN: usize = 32;
+    const ELEM: usize = core::mem::size_of::<f32>();
+    debug_assert_eq!(ELEM, 4);
+
+    let addr = ptr as usize;
+    let mis = addr & (ALIGN - 1);
+    if mis == 0 {
+        0
+    } else {
+        let bytes = ALIGN - mis;
+        let elems = bytes / ELEM;
+        core::cmp::min(elems, len)
+    }
+}
+
+#[inline(always)]
 pub(crate) fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
     debug_assert_eq!(a.len(), b.len());
 
-    let mut sum = f32x8::ZERO;
-    let mut i = 0usize;
+    const LANES: usize = 8;
+    let len = a.len();
+    let a_ptr = a.as_ptr();
+    let b_ptr = b.as_ptr();
 
-    while i + 8 <= a.len() {
-        let av: [f32; 8] =
-            unsafe { core::ptr::read_unaligned(a.as_ptr().add(i) as *const [f32; 8]) };
-        let bv: [f32; 8] =
-            unsafe { core::ptr::read_unaligned(b.as_ptr().add(i) as *const [f32; 8]) };
-        sum = sum + f32x8::from(av) * f32x8::from(bv);
-        i += 8;
+    let prefix = prefix_to_align_32(a_ptr, len);
+    let mut total = 0.0f32;
+    for i in 0..prefix {
+        total += a[i] * b[i];
     }
 
-    let mut total = sum.reduce_add();
-    for j in i..a.len() {
+    let mut i = prefix;
+    let end = len - ((len - i) % LANES);
+
+    // If the two pointers have the same mod-32 offset, then aligning `a` also aligns `b`.
+    let aligned_b = ((a_ptr as usize) ^ (b_ptr as usize)) & 31 == 0;
+
+    let mut sum = f32x8::ZERO;
+    unsafe {
+        while i < end {
+            let av = core::ptr::read(a_ptr.add(i) as *const f32x8);
+            let bv = if aligned_b {
+                core::ptr::read(b_ptr.add(i) as *const f32x8)
+            } else {
+                core::ptr::read_unaligned(b_ptr.add(i) as *const f32x8)
+            };
+            sum = sum + av * bv;
+            i += LANES;
+        }
+    }
+
+    total += sum.reduce_add();
+    for j in i..len {
         total += a[j] * b[j];
     }
     total
@@ -27,20 +63,37 @@ pub(crate) fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
 pub(crate) fn axpy_f32(y: &mut [f32], a: f32, x: &[f32]) {
     debug_assert_eq!(y.len(), x.len());
 
-    let av = f32x8::splat(a);
-    let mut i = 0usize;
+    const LANES: usize = 8;
+    let len = y.len();
+    let y_ptr = y.as_mut_ptr();
+    let x_ptr = x.as_ptr();
 
-    while i + 8 <= y.len() {
-        let yv: [f32; 8] =
-            unsafe { core::ptr::read_unaligned(y.as_ptr().add(i) as *const [f32; 8]) };
-        let xv: [f32; 8] =
-            unsafe { core::ptr::read_unaligned(x.as_ptr().add(i) as *const [f32; 8]) };
-        let r = f32x8::from(yv) + f32x8::from(xv) * av;
-        unsafe { core::ptr::write_unaligned(y.as_mut_ptr().add(i) as *mut [f32; 8], r.to_array()) };
-        i += 8;
+    let prefix = prefix_to_align_32(y_ptr, len);
+    for i in 0..prefix {
+        y[i] += a * x[i];
     }
 
-    for j in i..y.len() {
+    let mut i = prefix;
+    let end = len - ((len - i) % LANES);
+
+    let av = f32x8::splat(a);
+    let aligned_x = ((y_ptr as usize) ^ (x_ptr as usize)) & 31 == 0;
+
+    unsafe {
+        while i < end {
+            let yv = core::ptr::read(y_ptr.add(i) as *const f32x8);
+            let xv = if aligned_x {
+                core::ptr::read(x_ptr.add(i) as *const f32x8)
+            } else {
+                core::ptr::read_unaligned(x_ptr.add(i) as *const f32x8)
+            };
+            let r = yv + xv * av;
+            core::ptr::write(y_ptr.add(i) as *mut f32x8, r);
+            i += LANES;
+        }
+    }
+
+    for j in i..len {
         y[j] += a * x[j];
     }
 }

@@ -3,6 +3,7 @@ use ndarray::prelude::*;
 use ndarray::{Data, DataMut};
 
 use crate::adagram::VectorModel;
+use crate::simd;
 use spfunc::gamma::digamma;
 
 type F = f64;
@@ -87,11 +88,19 @@ pub fn var_init_z<C: Data<Elem = f32>, Z: DataMut<Elem = f64>>(
     senses
 }
 
-pub fn sigmoid(x: f64) -> f64 {
-    1. / (1. + (-x).exp())
+#[inline(always)]
+fn sigmoid_f32(x: f32) -> f32 {
+    if x >= 0.0 {
+        1.0 / (1.0 + (-x).exp())
+    } else {
+        let ex = x.exp();
+        ex / (1.0 + ex)
+    }
 }
-pub fn logsigmoid(x: f64) -> f64 {
-    -(1. + (-x).exp()).ln()
+
+#[inline(always)]
+fn logsigmoid_f32(x: f32) -> f32 {
+    -((1.0 + (-x).exp()).ln())
 }
 
 pub fn var_update_z<
@@ -115,18 +124,22 @@ pub fn var_update_z<
     let codes = codes.index_axis(Axis(0), y);
     let paths = paths.index_axis(Axis(0), y);
     let in_vecs_x = in_vecs.index_axis(Axis(0), x);
-    let mut f_buf = Array1::<f32>::zeros(t);
     for (code, path) in std::iter::zip(codes, paths) {
         if *code == u8::MAX {
             break;
         }
 
         let out_vec = out_vecs.index_axis(Axis(0), *path as usize);
-        ndarray::linalg::general_mat_vec_mul(1.0f32, &in_vecs_x, &out_vec, 0.0f32, &mut f_buf);
-
-        let sign = 1.0 - 2.0 * (*code as f64);
-        for (zk, &fk) in z.iter_mut().zip(f_buf.iter()) {
-            *zk += logsigmoid((fk as f64) * sign);
+        let sign = 1.0f32 - 2.0f32 * (*code as f32);
+        let out_vec_slice = out_vec
+            .as_slice()
+            .expect("expected contiguous out_vec storage");
+        for (zk, in_vec) in z.iter_mut().zip(in_vecs_x.outer_iter()).take(t) {
+            let in_vec_slice = in_vec
+                .as_slice()
+                .expect("expected contiguous in_vec storage");
+            let f = simd::dot_f32(in_vec_slice, out_vec_slice);
+            *zk += logsigmoid_f32(f * sign) as f64;
         }
     }
 }
@@ -143,9 +156,9 @@ fn _skip_gram(vm: &mut VectorModel, in_vec: &Array<f32, Ix1>, x: u32) -> f64 {
         }
 
         let out_vec = vm.out_vecs.slice(s![path, ..]);
-        let f = in_vec.dot(&out_vec) as f64;
-
-        pr += logsigmoid(f * (1. - 2. * (code as f64)));
+        let f = in_vec.dot(&out_vec);
+        let sign = 1.0f32 - 2.0f32 * (code as f32);
+        pr += logsigmoid_f32(f * sign) as f64;
     }
     pr
 }
@@ -173,8 +186,6 @@ pub fn in_place_update<
     sense_threshold: f64,
     compute_ll: bool,
 ) -> f64 {
-    const IN_PLACE_UPDATE_F64_MUL: bool = true;
-
     let mut pr = 0.;
     let t = counts.len_of(Axis(1));
     let x = x as usize;
@@ -194,7 +205,7 @@ pub fn in_place_update<
             }
 
             let code_f = *code as f64;
-            let sign = 1. - 2. * code_f;
+            let sign = 1.0f32 - 2.0f32 * (*code as f32);
 
             // let mut out_vec = vm.out_vecs.slice_mut(s![path, ..]);
             let mut out_vec = out_vecs.index_axis_mut(Axis(0), *path as usize);
@@ -203,38 +214,49 @@ pub fn in_place_update<
 
             {
                 let out_vec_ro = out_vec.view();
+                let out_slice = out_vec_ro
+                    .as_slice()
+                    .expect("expected contiguous out_vec storage");
                 for (k, in_vec) in in_vecs_x.outer_iter().enumerate().take(t) {
                     if z[k] < sense_threshold {
                         continue;
                     }
-                    let f = out_vec_ro.dot(&in_vec) as f64;
+                    let in_slice = in_vec
+                        .as_slice()
+                        .expect("expected contiguous in_vec storage");
+                    let f = simd::dot_f32(in_slice, out_slice);
 
                     if compute_ll {
-                        pr += z[k] * logsigmoid(f * sign);
+                        pr += z[k] * logsigmoid_f32(f * sign) as f64;
                     }
 
-                    let d = (1. - code_f) - sigmoid(f);
-                    if IN_PLACE_UPDATE_F64_MUL {
-                        let g = z[k] * lr * d;
-                        ndarray::Zip::from(in_grad.row_mut(k))
-                            .and(&out_vec_ro)
-                            .for_each(|in_grad_i, &out_i| {
-                                *in_grad_i += (g * out_i as f64) as f32;
-                            });
-                        ndarray::Zip::from(out_grad.view_mut())
-                            .and(&in_vec)
-                            .for_each(|out_grad_i, &in_i| {
-                                *out_grad_i += (g * in_i as f64) as f32;
-                            });
-                    } else {
-                        let g = (z[k] * lr * d) as f32;
-                        in_grad.row_mut(k).scaled_add(g, &out_vec_ro);
-                        out_grad.scaled_add(g, &in_vec);
+                    let d = (1. - code_f) - (sigmoid_f32(f) as f64);
+                    let g = (z[k] * lr * d) as f32;
+
+                    {
+                        let mut in_grad_row_view = in_grad.row_mut(k);
+                        let in_grad_row = in_grad_row_view
+                            .as_slice_mut()
+                            .expect("expected contiguous in_grad storage");
+                        simd::axpy_f32(in_grad_row, g, out_slice);
+                    }
+
+                    {
+                        let out_grad_slice = out_grad
+                            .as_slice_mut()
+                            .expect("expected contiguous out_grad storage");
+                        simd::axpy_f32(out_grad_slice, g, in_slice);
                     }
                 }
             }
 
-            out_vec += &out_grad.view();
+            let out_vec_slice = out_vec
+                .as_slice_mut()
+                .expect("expected contiguous out_vec storage");
+            let out_grad_slice = out_grad
+                .as_slice()
+                .expect("expected contiguous out_grad storage");
+            simd::axpy_f32(out_vec_slice, 1.0, out_grad_slice);
         }
     }
 
@@ -243,7 +265,14 @@ pub fn in_place_update<
         if z[k] < sense_threshold {
             continue;
         }
-        in_vec += &in_grad.row(k);
+        let in_grad_row = in_grad.row(k);
+        let in_vec_slice = in_vec
+            .as_slice_mut()
+            .expect("expected contiguous in_vec storage");
+        let in_grad_slice = in_grad_row
+            .as_slice()
+            .expect("expected contiguous in_grad storage");
+        simd::axpy_f32(in_vec_slice, 1.0, in_grad_slice);
     }
     pr
 }
