@@ -175,7 +175,6 @@ pub fn in_place_update<
 ) -> f64 {
     let mut pr = 0.;
     let t = counts.len_of(Axis(1));
-    let m = in_vecs.len_of(Axis(2));
     let x = x as usize;
     let _y = y as usize;
 
@@ -192,32 +191,35 @@ pub fn in_place_update<
                 break;
             }
 
-            //let mut out_vec = vm.out_vecs.slice_mut(s![path, ..]);
+            let code_f = *code as f64;
+            let sign = 1. - 2. * code_f;
+
+            // let mut out_vec = vm.out_vecs.slice_mut(s![path, ..]);
             let mut out_vec = out_vecs.index_axis_mut(Axis(0), *path as usize);
 
             out_grad.fill(0.);
 
-            for (k, in_vec) in in_vecs_x.outer_iter().enumerate().take(t) {
-                if z[k] < sense_threshold {
-                    continue;
-                }
-                let f = out_vec.dot(&in_vec) as f64;
+            {
+                let out_vec_ro = out_vec.view();
+                for (k, in_vec) in in_vecs_x.outer_iter().enumerate().take(t) {
+                    if z[k] < sense_threshold {
+                        continue;
+                    }
+                    let f = out_vec_ro.dot(&in_vec) as f64;
 
-                if compute_ll {
-                    pr += z[k] * logsigmoid(f * (1. - 2. * (*code as f64)));
-                }
-                let d = 1. - *code as f64 - sigmoid(f);
-                let g = z[k] * lr * d;
+                    if compute_ll {
+                        pr += z[k] * logsigmoid(f * sign);
+                    }
 
-                for i in 0..m {
-                    in_grad[[k, i]] += (g * out_vec[i] as f64) as f32;
-                    out_grad[i] += (g * in_vec[i] as f64) as f32;
+                    let d = (1. - code_f) - sigmoid(f);
+                    let g = (z[k] * lr * d) as f32;
+
+                    in_grad.row_mut(k).scaled_add(g, &out_vec_ro);
+                    out_grad.scaled_add(g, &in_vec);
                 }
             }
 
-            for i in 0..m {
-                out_vec[i] += out_grad[i];
-            }
+            out_vec += &out_grad.view();
         }
     }
 
