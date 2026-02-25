@@ -328,9 +328,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &mut in_grad,
                         &mut out_grad,
                         args.sense_threshold,
+                        thread_id == 0,
                     );
-                    total_ll2 += 1.;
-                    total_ll1 += (ll - total_ll1) / total_ll2;
+                    if thread_id == 0 {
+                        total_ll2 += 1.;
+                        total_ll1 += (ll - total_ll1) / total_ll2;
+                    }
                 }
 
                 var_update_counts(&freqs, &mut counts_mut, x, &z, lr2);

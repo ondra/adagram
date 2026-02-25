@@ -171,6 +171,7 @@ pub fn in_place_update<
     in_grad: &mut ArrayBase<D, Ix2>,
     out_grad: &mut ArrayBase<D, Ix1>,
     sense_threshold: f64,
+    compute_ll: bool,
 ) -> f64 {
     let mut pr = 0.;
     let t = counts.len_of(Axis(1));
@@ -202,7 +203,9 @@ pub fn in_place_update<
                 }
                 let f = out_vec.dot(&in_vec) as f64;
 
-                pr += z[k] * logsigmoid(f * (1. - 2. * (*code as f64)));
+                if compute_ll {
+                    pr += z[k] * logsigmoid(f * (1. - 2. * (*code as f64)));
+                }
                 let d = 1. - *code as f64 - sigmoid(f);
                 let g = z[k] * lr * d;
 
