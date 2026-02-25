@@ -1,6 +1,7 @@
 use ndarray::Array;
 use ndarray::prelude::*;
 use ndarray::{Data, DataMut};
+use ndarray::Dimension;
 
 use crate::simd;
 use spfunc::gamma::digamma;
@@ -65,6 +66,29 @@ fn fast_math_table() -> &'static FastMathTable {
     } else {
         FAST_MATH.get_or_init(FastMathTable::new)
     }
+}
+
+#[inline(always)]
+fn contig_slice<'a, S, D, T>(a: &'a ndarray::ArrayBase<S, D>, what: &'static str) -> &'a [T]
+where
+    S: Data<Elem = T>,
+    D: Dimension,
+{
+    a.as_slice()
+        .unwrap_or_else(|| panic!("expected contiguous {what} storage"))
+}
+
+#[inline(always)]
+fn contig_slice_mut<'a, S, D, T>(
+    a: &'a mut ndarray::ArrayBase<S, D>,
+    what: &'static str,
+) -> &'a mut [T]
+where
+    S: DataMut<Elem = T>,
+    D: Dimension,
+{
+    a.as_slice_mut()
+        .unwrap_or_else(|| panic!("expected contiguous {what} storage"))
 }
 
 pub fn init_math() {
@@ -229,44 +253,47 @@ pub fn var_update_z<
     y: u32,
     z: &mut Array<f64, Ix1>,
 ) {
-    let t = in_vecs.len_of(Axis(1));
     let x = x as usize;
     let y = y as usize;
 
-    let codes = codes.index_axis(Axis(0), y);
-    let paths = paths.index_axis(Axis(0), y);
-    let codes_slice = codes
-        .as_slice()
-        .expect("expected contiguous codes storage");
-    let paths_slice = paths
-        .as_slice()
-        .expect("expected contiguous paths storage");
+    debug_assert!(in_vecs.is_standard_layout());
+    debug_assert!(out_vecs.is_standard_layout());
+    debug_assert!(codes.is_standard_layout());
+    debug_assert!(paths.is_standard_layout());
 
-    let in_vecs_x = in_vecs.index_axis(Axis(0), x);
-    let in_vecs_x_slice = in_vecs_x
-        .as_slice()
-        .expect("expected contiguous in_vec storage");
-    let dim = in_vecs_x.len_of(Axis(1));
-    debug_assert_eq!(in_vecs_x_slice.len(), in_vecs_x.len_of(Axis(0)) * dim);
+    let t = in_vecs.len_of(Axis(1));
+    let dim = in_vecs.len_of(Axis(2));
+    debug_assert_eq!(out_vecs.len_of(Axis(1)), dim);
+    debug_assert!(z.len() >= t);
 
-    let z_slice = z.as_slice_mut().expect("expected contiguous z storage");
-    debug_assert!(z_slice.len() >= t);
+    let codes_all = contig_slice(codes, "codes");
+    let paths_all = contig_slice(paths, "paths");
+    let codelen = codes.len_of(Axis(1));
+    debug_assert_eq!(paths.len_of(Axis(1)), codelen);
+    let codes_row = &codes_all[y * codelen..(y + 1) * codelen];
+    let paths_row = &paths_all[y * codelen..(y + 1) * codelen];
 
-    for i in 0..codes_slice.len() {
-        let code = codes_slice[i];
+    let in_all = contig_slice(in_vecs, "in_vecs");
+    let x_base = x * t * dim;
+    let in_x = &in_all[x_base..x_base + t * dim];
+
+    let out_all = contig_slice(out_vecs, "out_vecs");
+
+    let z_slice = contig_slice_mut(z, "z");
+
+    for i in 0..codes_row.len() {
+        let code = codes_row[i];
         if code == u8::MAX {
             break;
         }
 
-        let out_vec = out_vecs.index_axis(Axis(0), paths_slice[i] as usize);
         let sign = 1.0f32 - 2.0f32 * (code as f32);
-        let out_vec_slice = out_vec
-            .as_slice()
-            .expect("expected contiguous out_vec storage");
+        let path = paths_row[i] as usize;
+        let out_slice = &out_all[path * dim..(path + 1) * dim];
 
         for k in 0..t {
-            let in_slice = &in_vecs_x_slice[k * dim..(k + 1) * dim];
-            let f = simd::dot_f32(in_slice, out_vec_slice);
+            let in_slice = &in_x[k * dim..(k + 1) * dim];
+            let f = simd::dot_f32(in_slice, out_slice);
             z_slice[k] += logsigmoid_f32(f * sign) as f64;
         }
     }
@@ -314,34 +341,42 @@ pub fn in_place_update<
     let x = x as usize;
     let _y = y as usize;
 
-    let in_grad_slice = in_grad
-        .as_slice_mut()
-        .expect("expected contiguous in_grad storage");
+    debug_assert!(in_vecs.is_standard_layout());
+    debug_assert!(out_vecs.is_standard_layout());
+    debug_assert!(codes.is_standard_layout());
+    debug_assert!(paths.is_standard_layout());
+    debug_assert!(in_grad.is_standard_layout());
+    debug_assert!(out_grad.is_standard_layout());
+
+    let dim = out_vecs.len_of(Axis(1));
+    debug_assert_eq!(in_vecs.len_of(Axis(2)), dim);
+    debug_assert_eq!(in_vecs.len_of(Axis(1)), t);
+    debug_assert_eq!(in_grad.len(), t * dim);
+    debug_assert_eq!(out_grad.len(), dim);
+
+    let in_grad_slice = contig_slice_mut(in_grad, "in_grad");
     in_grad_slice.fill(0.0);
 
+    let out_grad_slice = contig_slice_mut(out_grad, "out_grad");
+    let z_slice = contig_slice(z, "z");
+    debug_assert!(z_slice.len() >= t);
+
+    let codes_all = contig_slice(codes, "codes");
+    let paths_all = contig_slice(paths, "paths");
+    let codelen = codes.len_of(Axis(1));
+    debug_assert_eq!(paths.len_of(Axis(1)), codelen);
+    let codes_row = &codes_all[y as usize * codelen..(y as usize + 1) * codelen];
+    let paths_row = &paths_all[y as usize * codelen..(y as usize + 1) * codelen];
+
+    let out_all = contig_slice_mut(out_vecs, "out_vecs");
+
     {
-        let in_vecs_view = in_vecs.view();
-        let in_vecs_x = in_vecs_view.index_axis(Axis(0), x);
-        let in_vecs_x_slice = in_vecs_x
-            .as_slice()
-            .expect("expected contiguous in_vec storage");
-        let dim = in_vecs_x.len_of(Axis(1));
-        debug_assert_eq!(in_vecs_x_slice.len(), in_vecs_x.len_of(Axis(0)) * dim);
-        debug_assert_eq!(in_grad_slice.len(), t * dim);
-        let z_slice = z.as_slice().expect("expected contiguous z storage");
-        debug_assert!(z_slice.len() >= t);
+        let in_all = contig_slice(in_vecs, "in_vecs");
+        let x_base = x * t * dim;
+        let in_x = &in_all[x_base..x_base + t * dim];
 
-        let codes = codes.index_axis(Axis(0), y as usize);
-        let paths = paths.index_axis(Axis(0), y as usize);
-        let codes_slice = codes
-            .as_slice()
-            .expect("expected contiguous codes storage");
-        let paths_slice = paths
-            .as_slice()
-            .expect("expected contiguous paths storage");
-
-        for i in 0..codes_slice.len() {
-            let code = codes_slice[i];
+        for i in 0..codes_row.len() {
+            let code = codes_row[i];
             if code == u8::MAX {
                 break;
             }
@@ -349,33 +384,27 @@ pub fn in_place_update<
             let code_f = code as f64;
             let sign = 1.0f32 - 2.0f32 * (code as f32);
 
-            // let mut out_vec = vm.out_vecs.slice_mut(s![path, ..]);
-            let mut out_vec = out_vecs.index_axis_mut(Axis(0), paths_slice[i] as usize);
-
-            let out_grad_slice = out_grad
-                .as_slice_mut()
-                .expect("expected contiguous out_grad storage");
             out_grad_slice.fill(0.0);
 
+            let path = paths_row[i] as usize;
+            let out_off = path * dim;
+
             {
-                let out_vec_ro = out_vec.view();
-                let out_slice = out_vec_ro
-                    .as_slice()
-                    .expect("expected contiguous out_vec storage");
-                debug_assert_eq!(out_slice.len(), dim);
+                let out_slice: &[f32] = &out_all[out_off..out_off + dim];
                 for k in 0..t {
-                    if z_slice[k] < sense_threshold {
+                    let zk = z_slice[k];
+                    if zk < sense_threshold {
                         continue;
                     }
-                    let in_slice = &in_vecs_x_slice[k * dim..(k + 1) * dim];
+                    let in_slice = &in_x[k * dim..(k + 1) * dim];
                     let f = simd::dot_f32(in_slice, out_slice);
 
                     if compute_ll {
-                        pr += z_slice[k] * (logsigmoid_f32(f * sign) as f64);
+                        pr += zk * (logsigmoid_f32(f * sign) as f64);
                     }
 
                     let d = (1. - code_f) - (sigmoid_f32(f) as f64);
-                    let g = (z_slice[k] * lr * d) as f32;
+                    let g = (zk * lr * d) as f32;
 
                     {
                         let in_grad_row = &mut in_grad_slice[k * dim..(k + 1) * dim];
@@ -388,27 +417,21 @@ pub fn in_place_update<
                 }
             }
 
-            let out_vec_slice = out_vec
-                .as_slice_mut()
-                .expect("expected contiguous out_vec storage");
-            simd::axpy_f32(out_vec_slice, 1.0, out_grad_slice);
+            {
+                let out_row = &mut out_all[out_off..out_off + dim];
+                simd::axpy_f32(out_row, 1.0, out_grad_slice);
+            }
         }
     }
 
-    let mut in_vecs_x = in_vecs.index_axis_mut(Axis(0), x);
-    let dim = in_vecs_x.len_of(Axis(1));
-    let rows = in_vecs_x.len_of(Axis(0));
-    let in_vecs_x_slice = in_vecs_x
-        .as_slice_mut()
-        .expect("expected contiguous in_vec storage");
-    debug_assert_eq!(in_vecs_x_slice.len(), rows * dim);
-    debug_assert_eq!(in_grad_slice.len(), t * dim);
-    let z_slice = z.as_slice().expect("expected contiguous z storage");
+    let in_all_mut = contig_slice_mut(in_vecs, "in_vecs");
+    let x_base = x * t * dim;
+    let in_x_mut = &mut in_all_mut[x_base..x_base + t * dim];
     for k in 0..t {
         if z_slice[k] < sense_threshold {
             continue;
         }
-        let in_vec_slice = &mut in_vecs_x_slice[k * dim..(k + 1) * dim];
+        let in_vec_slice = &mut in_x_mut[k * dim..(k + 1) * dim];
         let in_grad_row = &in_grad_slice[k * dim..(k + 1) * dim];
         simd::axpy_f32(in_vec_slice, 1.0, in_grad_row);
     }

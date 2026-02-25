@@ -1,15 +1,13 @@
 use wide::AlignTo;
 
-pub(crate) type SimdF32 = wide::f32x8;
-pub(crate) type ElemF32 = f32;
-
-pub(crate) const LANES: usize = core::mem::size_of::<SimdF32>() / core::mem::size_of::<ElemF32>();
+type SimdF32 = wide::f32x8;
+const LANES: usize = core::mem::size_of::<SimdF32>() / core::mem::size_of::<<SimdF32 as AlignTo>::Elem>();
 
 pub const PAD_DIM_TO_SIMD: bool = true;
 
 /// If enabled, assumes all embedding slices are aligned to `SimdF32` and have a length that is a
 /// multiple of `LANES`, so we can skip `simd_align_to{,_mut}` and any scalar edges.
-pub const SIMD_ASSUME_ALIGNED_SLICES: bool = false;
+pub const SIMD_ASSUME_ALIGNED_SLICES: bool = true;
 
 #[inline(always)]
 pub(crate) fn pad_dim(dim: usize) -> usize {
