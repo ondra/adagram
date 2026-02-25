@@ -8,10 +8,13 @@ use std::io::Read;
 use std::io::Write;
 
 use crate::common::expected_pi;
+use crate::simd;
 
 type V = f32;
 
 pub struct VectorModel {
+    pub dim: usize,
+    pub dim_padded: usize,
     pub freqs: Array<u64, Ix1>,
     pub code: Array<u8, Ix2>,
     pub path: Array<u32, Ix2>,
@@ -33,12 +36,23 @@ impl VectorModel {
         rng: &mut SmallRng,
     ) -> VectorModel {
         let u = Uniform::new(-0.5f32 / dim as f32, 0.5f32 / dim as f32);
+        let dim_padded = simd::pad_dim(dim);
+        let mut in_vecs = Array::random_using((lexsize, nsenses, dim_padded), u, rng);
+        let mut out_vecs = Array::random_using((lexsize, dim_padded), u, rng);
+        if dim_padded > dim {
+            in_vecs.slice_mut(s![.., .., dim..]).fill(0.0);
+            out_vecs.slice_mut(s![.., dim..]).fill(0.0);
+        }
+        simd::assert_simd_preconditions(dim_padded, in_vecs.as_ptr(), "in_vecs");
+        simd::assert_simd_preconditions(dim_padded, out_vecs.as_ptr(), "out_vecs");
         VectorModel {
+            dim,
+            dim_padded,
             freqs: Array::zeros(lexsize),
             code: Array::from_elem((lexsize, codelen), u8::MAX),
             path: Array::zeros((lexsize, codelen)),
-            in_vecs: Array::random_using((lexsize, nsenses, dim), u, rng),
-            out_vecs: Array::random_using((lexsize, dim), u, rng),
+            in_vecs,
+            out_vecs,
             alpha,
             counts: Array::zeros((lexsize, nsenses)),
             normed: false,
@@ -76,16 +90,21 @@ impl VectorModel {
         rf.read_line(&mut line)?;
         let codelen = line.trim().parse::<usize>()?;
 
+        let dim_padded = simd::pad_dim(dim);
         let mut vm = VectorModel {
+            dim,
+            dim_padded,
             freqs: Array::zeros(lexsize),
             code: Array::from_elem((lexsize, codelen), u8::MAX),
             path: Array::zeros((lexsize, codelen)),
-            in_vecs: Array::zeros((lexsize, nsenses, dim)),
-            out_vecs: Array::zeros((lexsize, dim)),
+            in_vecs: Array::zeros((lexsize, nsenses, dim_padded)),
+            out_vecs: Array::zeros((lexsize, dim_padded)),
             alpha,
             counts: Array::zeros((lexsize, nsenses)),
             normed: false,
         };
+        simd::assert_simd_preconditions(dim_padded, vm.in_vecs.as_ptr(), "in_vecs");
+        simd::assert_simd_preconditions(dim_padded, vm.out_vecs.as_ptr(), "out_vecs");
 
         let mut buf = [0u8; 8];
         for i in 0..lexsize {
@@ -318,7 +337,7 @@ impl VectorModel {
     {
         let mut vecwr = std::io::BufWriter::new(vecf);
         let s = self.in_vecs.shape();
-        writeln!(vecwr, "{} {} {}", s[0], s[2], s[1])?;
+        writeln!(vecwr, "{} {} {}", s[0], self.dim, s[1])?;
         writeln!(vecwr, "{} {}", self.alpha, 0)?;
         writeln!(vecwr, "{}", self.code.len_of(Axis(1)))?;
 
@@ -334,8 +353,10 @@ impl VectorModel {
         for &e in self.counts.iter() {
             vecwr.write_all(&e.to_le_bytes())?;
         }
-        for &e in self.out_vecs.iter() {
-            vecwr.write_all(&e.to_le_bytes())?;
+        for i in 0..s[0] {
+            for j in 0..self.dim {
+                vecwr.write_all(&self.out_vecs[[i, j]].to_le_bytes())?;
+            }
         }
 
         let mut z = Array::<f64, Ix1>::zeros(s[1]);
@@ -349,7 +370,7 @@ impl VectorModel {
                     continue;
                 }
                 writeln!(vecwr, "{}", k + 1)?;
-                for e in self.in_vecs.slice(s![v, k, ..]).iter() {
+                for e in self.in_vecs.slice(s![v, k, 0..self.dim]).iter() {
                     vecwr.write_all(&e.to_le_bytes())?;
                 }
                 writeln!(vecwr)?;

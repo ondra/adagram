@@ -162,7 +162,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // let batch = 64000;
-    let dim = args.dim;
+    let dim = vm.dim_padded;
     let prototypes = args.prototypes;
 
     let mut total_frq = 0u64;
