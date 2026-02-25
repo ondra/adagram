@@ -8,7 +8,7 @@ use ndarray::prelude::*;
 use ndarray_rand::rand::SeedableRng;
 use ndarray_rand::rand::prelude::SmallRng;
 
-use adagram::adagram::{parse_window, VectorModel};
+use adagram::adagram::{VectorModel, parse_window};
 use adagram::common::*;
 use adagram::nn::nearest;
 use adagram::reservoir_sampling::SamplerExt;

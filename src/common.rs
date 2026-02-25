@@ -173,6 +173,8 @@ pub fn in_place_update<
     sense_threshold: f64,
     compute_ll: bool,
 ) -> f64 {
+    const IN_PLACE_UPDATE_F64_MUL: bool = true;
+
     let mut pr = 0.;
     let t = counts.len_of(Axis(1));
     let x = x as usize;
@@ -212,10 +214,23 @@ pub fn in_place_update<
                     }
 
                     let d = (1. - code_f) - sigmoid(f);
-                    let g = (z[k] * lr * d) as f32;
-
-                    in_grad.row_mut(k).scaled_add(g, &out_vec_ro);
-                    out_grad.scaled_add(g, &in_vec);
+                    if IN_PLACE_UPDATE_F64_MUL {
+                        let g = z[k] * lr * d;
+                        ndarray::Zip::from(in_grad.row_mut(k))
+                            .and(&out_vec_ro)
+                            .for_each(|in_grad_i, &out_i| {
+                                *in_grad_i += (g * out_i as f64) as f32;
+                            });
+                        ndarray::Zip::from(out_grad.view_mut())
+                            .and(&in_vec)
+                            .for_each(|out_grad_i, &in_i| {
+                                *out_grad_i += (g * in_i as f64) as f32;
+                            });
+                    } else {
+                        let g = (z[k] * lr * d) as f32;
+                        in_grad.row_mut(k).scaled_add(g, &out_vec_ro);
+                        out_grad.scaled_add(g, &in_vec);
+                    }
                 }
             }
 
