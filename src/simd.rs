@@ -1,61 +1,36 @@
 use wide::f32x8;
 
 #[inline(always)]
-fn prefix_to_align_32(ptr: *const f32, len: usize) -> usize {
-    const ALIGN: usize = 32;
-    const ELEM: usize = core::mem::size_of::<f32>();
-    debug_assert_eq!(ELEM, 4);
-
-    let addr = ptr as usize;
-    let mis = addr & (ALIGN - 1);
-    if mis == 0 {
-        0
-    } else {
-        let bytes = ALIGN - mis;
-        let elems = bytes / ELEM;
-        core::cmp::min(elems, len)
-    }
-}
-
-#[inline(always)]
 pub(crate) fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
     debug_assert_eq!(a.len(), b.len());
 
-    const LANES: usize = 8;
-    let len = a.len();
-    let a_ptr = a.as_ptr();
-    let b_ptr = b.as_ptr();
+    // Safety: `wide::f32x8` is a plain-old-data SIMD wrapper (bytemuck `Pod` in the wide crate),
+    // and we only read initialized `f32` data through it.
+    let (a_left, a_mid, a_right) = unsafe { a.align_to::<f32x8>() };
+    let (b_left, b_mid, b_right) = unsafe { b.align_to::<f32x8>() };
+    assert_eq!(a_left.len(), b_left.len(), "misaligned SIMD split (left)");
+    assert_eq!(a_mid.len(), b_mid.len(), "misaligned SIMD split (mid)");
+    assert_eq!(
+        a_right.len(),
+        b_right.len(),
+        "misaligned SIMD split (right)"
+    );
 
-    let prefix = prefix_to_align_32(a_ptr, len);
     let mut total = 0.0f32;
-    for i in 0..prefix {
-        total += a[i] * b[i];
+    for i in 0..a_left.len() {
+        total += a_left[i] * b_left[i];
     }
-
-    let mut i = prefix;
-    let end = len - ((len - i) % LANES);
-
-    // If the two pointers have the same mod-32 offset, then aligning `a` also aligns `b`.
-    let aligned_b = ((a_ptr as usize) ^ (b_ptr as usize)) & 31 == 0;
 
     let mut sum = f32x8::ZERO;
-    unsafe {
-        while i < end {
-            let av = core::ptr::read(a_ptr.add(i) as *const f32x8);
-            let bv = if aligned_b {
-                core::ptr::read(b_ptr.add(i) as *const f32x8)
-            } else {
-                core::ptr::read_unaligned(b_ptr.add(i) as *const f32x8)
-            };
-            sum = sum + av * bv;
-            i += LANES;
-        }
+    for (av, bv) in a_mid.iter().zip(b_mid.iter()) {
+        sum = sum + (*av) * (*bv);
+    }
+    total += sum.reduce_add();
+
+    for i in 0..a_right.len() {
+        total += a_right[i] * b_right[i];
     }
 
-    total += sum.reduce_add();
-    for j in i..len {
-        total += a[j] * b[j];
-    }
     total
 }
 
@@ -63,37 +38,28 @@ pub(crate) fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
 pub(crate) fn axpy_f32(y: &mut [f32], a: f32, x: &[f32]) {
     debug_assert_eq!(y.len(), x.len());
 
-    const LANES: usize = 8;
-    let len = y.len();
-    let y_ptr = y.as_mut_ptr();
-    let x_ptr = x.as_ptr();
-
-    let prefix = prefix_to_align_32(y_ptr, len);
-    for i in 0..prefix {
-        y[i] += a * x[i];
-    }
-
-    let mut i = prefix;
-    let end = len - ((len - i) % LANES);
-
     let av = f32x8::splat(a);
-    let aligned_x = ((y_ptr as usize) ^ (x_ptr as usize)) & 31 == 0;
+    // Safety: same rationale as in `dot_f32` above; additionally, the aligned middle is written
+    // back as `f32x8` without violating aliasing (it is the same memory as `y`).
+    let (y_left, y_mid, y_right) = unsafe { y.align_to_mut::<f32x8>() };
+    let (x_left, x_mid, x_right) = unsafe { x.align_to::<f32x8>() };
+    assert_eq!(y_left.len(), x_left.len(), "misaligned SIMD split (left)");
+    assert_eq!(y_mid.len(), x_mid.len(), "misaligned SIMD split (mid)");
+    assert_eq!(
+        y_right.len(),
+        x_right.len(),
+        "misaligned SIMD split (right)"
+    );
 
-    unsafe {
-        while i < end {
-            let yv = core::ptr::read(y_ptr.add(i) as *const f32x8);
-            let xv = if aligned_x {
-                core::ptr::read(x_ptr.add(i) as *const f32x8)
-            } else {
-                core::ptr::read_unaligned(x_ptr.add(i) as *const f32x8)
-            };
-            let r = yv + xv * av;
-            core::ptr::write(y_ptr.add(i) as *mut f32x8, r);
-            i += LANES;
-        }
+    for i in 0..y_left.len() {
+        y_left[i] += a * x_left[i];
     }
 
-    for j in i..len {
-        y[j] += a * x[j];
+    for (yv, xv) in y_mid.iter_mut().zip(x_mid.iter()) {
+        *yv = *yv + (*xv) * av;
+    }
+
+    for i in 0..y_right.len() {
+        y_right[i] += a * x_right[i];
     }
 }
