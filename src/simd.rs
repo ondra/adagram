@@ -23,7 +23,7 @@ pub(crate) fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
 
     let mut sum = f32x8::ZERO;
     for (av, bv) in a_mid.iter().zip(b_mid.iter()) {
-        sum = sum + (*av) * (*bv);
+        sum += (*av) * (*bv);
     }
     total += sum.reduce_add();
 
@@ -37,8 +37,6 @@ pub(crate) fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
 #[inline(always)]
 pub(crate) fn axpy_f32(y: &mut [f32], a: f32, x: &[f32]) {
     debug_assert_eq!(y.len(), x.len());
-
-    let av = f32x8::splat(a);
     // Safety: same rationale as in `dot_f32` above; additionally the aligned middle is written
     // back as `f32x8` without violating aliasing (it is the same memory as `y`).
     let (y_left, y_mid, y_right) = f32x8::simd_align_to_mut(y);
@@ -56,7 +54,7 @@ pub(crate) fn axpy_f32(y: &mut [f32], a: f32, x: &[f32]) {
     }
 
     for (yv, xv) in y_mid.iter_mut().zip(x_mid.iter()) {
-        *yv = *yv + (*xv) * av;
+        *yv += a * (*xv);
     }
 
     for i in 0..y_right.len() {
