@@ -1,13 +1,13 @@
+use wide::AlignTo;
 use wide::f32x8;
 
 #[inline(always)]
 pub(crate) fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
     debug_assert_eq!(a.len(), b.len());
 
-    // Safety: `wide::f32x8` is a plain-old-data SIMD wrapper (bytemuck `Pod` in the wide crate),
-    // and we only read initialized `f32` data through it.
-    let (a_left, a_mid, a_right) = unsafe { a.align_to::<f32x8>() };
-    let (b_left, b_mid, b_right) = unsafe { b.align_to::<f32x8>() };
+    // Safety: `wide::f32x8` is a plain-old-data SIMD wrapper and we only read initialized f32s.
+    let (a_left, a_mid, a_right) = f32x8::simd_align_to(a);
+    let (b_left, b_mid, b_right) = f32x8::simd_align_to(b);
     assert_eq!(a_left.len(), b_left.len(), "misaligned SIMD split (left)");
     assert_eq!(a_mid.len(), b_mid.len(), "misaligned SIMD split (mid)");
     assert_eq!(
@@ -39,10 +39,10 @@ pub(crate) fn axpy_f32(y: &mut [f32], a: f32, x: &[f32]) {
     debug_assert_eq!(y.len(), x.len());
 
     let av = f32x8::splat(a);
-    // Safety: same rationale as in `dot_f32` above; additionally, the aligned middle is written
+    // Safety: same rationale as in `dot_f32` above; additionally the aligned middle is written
     // back as `f32x8` without violating aliasing (it is the same memory as `y`).
-    let (y_left, y_mid, y_right) = unsafe { y.align_to_mut::<f32x8>() };
-    let (x_left, x_mid, x_right) = unsafe { x.align_to::<f32x8>() };
+    let (y_left, y_mid, y_right) = f32x8::simd_align_to_mut(y);
+    let (x_left, x_mid, x_right) = f32x8::simd_align_to(x);
     assert_eq!(y_left.len(), x_left.len(), "misaligned SIMD split (left)");
     assert_eq!(y_mid.len(), x_mid.len(), "misaligned SIMD split (mid)");
     assert_eq!(
