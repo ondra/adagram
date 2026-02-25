@@ -5,11 +5,135 @@ use ndarray::{Data, DataMut};
 use crate::adagram::VectorModel;
 use crate::simd;
 use spfunc::gamma::digamma;
+use std::sync::OnceLock;
 
 type F = f64;
 
 // fn digamma(x: F) -> F { x.ln() - 0.5*x }
 // ^ bad, maybe use https://math.stackexchange.com/a/1446110
+
+/// Controls whether `sigmoid`/`logsigmoid` use precise `exp/log` math (slower) or a lookup-table
+/// approximation (faster). This is a compile-time choice on purpose to keep the hot loops free of
+/// runtime conditionals.
+pub const PRECISE_MATH: bool = false;
+
+const FAST_MATH_MAX_X: f32 = 8.0;
+const FAST_MATH_N: usize = 4096;
+
+struct FastMathTable {
+    inv_step: f32,
+    sigmoid: Vec<f32>,
+    logsigmoid: Vec<f32>,
+}
+
+impl FastMathTable {
+    fn new() -> Self {
+        let step = (2.0 * FAST_MATH_MAX_X) / (FAST_MATH_N as f32 - 1.0);
+        let inv_step = 1.0 / step;
+        let mut sigmoid = Vec::with_capacity(FAST_MATH_N);
+        let mut logsigmoid = Vec::with_capacity(FAST_MATH_N);
+        for i in 0..FAST_MATH_N {
+            let x = -FAST_MATH_MAX_X + (i as f32) * step;
+            let s = 1.0 / (1.0 + (-x).exp());
+            sigmoid.push(s);
+            logsigmoid.push(s.ln());
+        }
+        Self {
+            inv_step,
+            sigmoid,
+            logsigmoid,
+        }
+    }
+
+    #[inline(always)]
+    fn idx(&self, x: f32) -> (usize, f32) {
+        let t = (x + FAST_MATH_MAX_X) * self.inv_step;
+        let mut i = t as usize;
+        if i + 1 >= FAST_MATH_N {
+            i = FAST_MATH_N - 2;
+        }
+        let frac = t - i as f32;
+        (i, frac)
+    }
+}
+
+static FAST_MATH: OnceLock<FastMathTable> = OnceLock::new();
+
+#[inline(always)]
+fn fast_math_table() -> &'static FastMathTable {
+    FAST_MATH.get_or_init(FastMathTable::new)
+}
+
+pub fn init_math() {
+    if !PRECISE_MATH {
+        let _ = fast_math_table();
+    }
+}
+
+#[inline(always)]
+fn sigmoid_precise_f32(x: f32) -> f32 {
+    if x >= 0.0 {
+        1.0 / (1.0 + (-x).exp())
+    } else {
+        let ex = x.exp();
+        ex / (1.0 + ex)
+    }
+}
+
+#[inline(always)]
+fn logsigmoid_precise_f32(x: f32) -> f32 {
+    if x >= 0.0 {
+        -((-x).exp()).ln_1p()
+    } else {
+        x - (x.exp()).ln_1p()
+    }
+}
+
+#[inline(always)]
+fn sigmoid_fast_f32(table: &FastMathTable, x: f32) -> f32 {
+    if x <= -FAST_MATH_MAX_X {
+        return 0.0;
+    }
+    if x >= FAST_MATH_MAX_X {
+        return 1.0;
+    }
+    let (i, frac) = table.idx(x);
+    let s0 = table.sigmoid[i];
+    let s1 = table.sigmoid[i + 1];
+    s0 + (s1 - s0) * frac
+}
+
+#[inline(always)]
+fn logsigmoid_fast_f32(table: &FastMathTable, x: f32) -> f32 {
+    if x <= -FAST_MATH_MAX_X {
+        return x;
+    }
+    if x >= FAST_MATH_MAX_X {
+        return 0.0;
+    }
+    let (i, frac) = table.idx(x);
+    let l0 = table.logsigmoid[i];
+    let l1 = table.logsigmoid[i + 1];
+    l0 + (l1 - l0) * frac
+}
+
+#[inline(always)]
+fn sigmoid_f32(x: f32) -> f32 {
+    if PRECISE_MATH {
+        sigmoid_precise_f32(x)
+    } else {
+        sigmoid_fast_f32(fast_math_table(), x)
+    }
+}
+
+#[inline(always)]
+fn logsigmoid_f32(x: f32) -> f32 {
+    if PRECISE_MATH {
+        logsigmoid_precise_f32(x)
+    } else {
+        logsigmoid_fast_f32(fast_math_table(), x)
+    }
+}
 
 pub fn mean_beta(a: F, b: F) -> F {
     a / (a + b)
@@ -86,21 +210,6 @@ pub fn var_init_z<C: Data<Elem = f32>, Z: DataMut<Elem = f64>>(
         senses += 1;
     }
     senses
-}
-
-#[inline(always)]
-fn sigmoid_f32(x: f32) -> f32 {
-    if x >= 0.0 {
-        1.0 / (1.0 + (-x).exp())
-    } else {
-        let ex = x.exp();
-        ex / (1.0 + ex)
-    }
-}
-
-#[inline(always)]
-fn logsigmoid_f32(x: f32) -> f32 {
-    -((1.0 + (-x).exp()).ln())
 }
 
 pub fn var_update_z<
@@ -227,7 +336,7 @@ pub fn in_place_update<
                     let f = simd::dot_f32(in_slice, out_slice);
 
                     if compute_ll {
-                        pr += z[k] * logsigmoid_f32(f * sign) as f64;
+                        pr += z[k] * (logsigmoid_f32(f * sign) as f64);
                     }
 
                     let d = (1. - code_f) - (sigmoid_f32(f) as f64);

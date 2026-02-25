@@ -93,6 +93,7 @@ struct Args {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    adagram::common::init_math();
 
     let tmpoutpath = args.outpath.to_string() + ".tmp";
     let mut outfile = std::fs::File::create(&tmpoutpath)?;
