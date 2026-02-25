@@ -253,25 +253,6 @@ pub fn var_update_z<
     }
 }
 
-fn _skip_gram(vm: &mut VectorModel, in_vec: &Array<f32, Ix1>, x: u32) -> f64 {
-    let x = x as usize;
-    let mut pr = 0.;
-
-    for n in 0..vm.code.len_of(Axis(1)) {
-        let code = vm.code[[x, n]];
-        let path = vm.path[[x, n]] as usize;
-        if code == u8::MAX {
-            break;
-        }
-
-        let out_vec = vm.out_vecs.slice(s![path, ..]);
-        let f = in_vec.dot(&out_vec);
-        let sign = 1.0f32 - 2.0f32 * (code as f32);
-        pr += logsigmoid_f32(f * sign) as f64;
-    }
-    pr
-}
-
 pub fn in_place_update<
     I: ndarray::DataMut<Elem = f32>,
     O: ndarray::DataMut<Elem = f32>,
