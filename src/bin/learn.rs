@@ -15,6 +15,8 @@ use adagram::common::*;
 use adagram::hogwild;
 use adagram::huffman;
 
+use multiversion::multiversion;
+
 const VERSION: &str = git_version::git_version!(args = ["--tags", "--always", "--dirty"]);
 
 /// Train an adaptive skip-gram model
@@ -91,7 +93,10 @@ struct Args {
     docstructure: String,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> { truemain() }
+
+#[multiversion(targets = "simd")]
+fn truemain() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     adagram::common::init_math();
 
