@@ -217,9 +217,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let starttime = std::time::Instant::now();
         let mut total_ll1 = 0.0f64;
         let mut total_ll2 = 0.0f64;
-        let mut local_words_read = 0;
         let compute_ll = thread_id == 0;
         let window = args.window as isize;
+
+        const SYNC_INTERVAL: usize = 1024;
+        let mut unsync_positions = 0usize;
+        #[allow(unused_assignments)]
+        let mut global_words_read = 0usize;
+        let mut lr = args.start_lr;
+
+        // Sync local progress to the global counter and return the global position count.
+        let sync = |unsync: &mut usize| -> usize {
+            let prev = words_read.fetch_add(*unsync, std::sync::atomic::Ordering::Relaxed);
+            let global = prev + *unsync;
+            *unsync = 0;
+            global
+        };
 
         for rawdoc in dociterm(doc.as_ref(), attr.as_ref(), &oid_to_nid, startdoc) {
             preprocess_into(
@@ -235,40 +248,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut out_mut = out_vecs.as_mut().view_mut();
             let mut counts_mut = counts.as_mut().view_mut();
 
-            let lr = f64::max(
-                args.start_lr * (1. - local_words_read as f64 / (total_words as f64 + 1.)),
-                args.start_lr * 1e-4,
-            );
-
-            if compute_ll {
-                let dur = reporttime.elapsed().as_secs_f64();
-                if dur > 1.0 {
-                    let rws = local_words_read - words_read_last;
-                    words_read_last = local_words_read;
-                    let wps = rws as f64 / dur;
-                    let remaining_secs = if wps > 0.0 {
-                        (total_words - local_words_read) as f64 / wps
-                    } else {
-                        0.0
-                    };
-                    reporttime = std::time::Instant::now();
-                    let elapsed = reporttime.duration_since(starttime).as_secs();
-                    eprint!(
-                        "\r[{}] visited {} positions out of {} ({:.2} %), {:.0} wps, {:02}h:{:02}m remaining, lr {:.5} ll {:.7}",
-                        elapsed,
-                        local_words_read,
-                        total_words,
-                        local_words_read as f64 / total_words as f64 * 100.0,
-                        wps,
-                        remaining_secs as u64 / 3600,
-                        (remaining_secs as u64 % 3600) / 60,
-                        lr,
-                        total_ll1,
-                    );
-                }
-            }
-
             for i in 0..doc.len() {
+                // Periodically sync with the global counter
+                if unsync_positions >= SYNC_INTERVAL {
+                    global_words_read = sync(&mut unsync_positions);
+                    lr = f64::max(
+                        args.start_lr * (1. - global_words_read as f64 / (total_words as f64 + 1.)),
+                        args.start_lr * 1e-4,
+                    );
+
+                    if compute_ll {
+                        let dur = reporttime.elapsed().as_secs_f64();
+                        if dur > 1.0 {
+                            let rws = global_words_read - words_read_last;
+                            words_read_last = global_words_read;
+                            let wps = rws as f64 / dur;
+                            let remaining_secs = if wps > 0.0 {
+                                (total_words - global_words_read) as f64 / wps
+                            } else {
+                                0.0
+                            };
+                            reporttime = std::time::Instant::now();
+                            let elapsed = reporttime.duration_since(starttime).as_secs();
+                            eprint!(
+                                "\r[{}] visited {} positions out of {} ({:.2} %), {:.0} wps, {:02}h:{:02}m remaining, lr {:.5} ll {:.7}",
+                                elapsed,
+                                global_words_read,
+                                total_words,
+                                global_words_read as f64 / total_words as f64 * 100.0,
+                                wps,
+                                remaining_secs as u64 / 3600,
+                                (remaining_secs as u64 % 3600) / 60,
+                                lr,
+                                total_ll1,
+                            );
+                        }
+                    }
+
+                    if global_words_read >= total_words {
+                        return;
+                    }
+                }
+
                 let x = doc[i];
                 let j_lo = (i as isize - window).max(0) as usize;
                 let j_hi = (i as isize + window).min(doc.len() as isize) as usize;
@@ -297,13 +318,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 var_update_counts(&freqs, &mut counts_mut, x, &z, lr);
-            }
-            local_words_read =
-                words_read.fetch_add(doc.len(), std::sync::atomic::Ordering::Relaxed);
-            if local_words_read >= total_words {
-                return;
+                unsync_positions += 1;
             }
         }
+        // Flush any remaining unsync'd positions
+        sync(&mut unsync_positions);
     };
 
     eprintln!("starting workers");
