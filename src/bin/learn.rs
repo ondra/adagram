@@ -51,7 +51,7 @@ struct Args {
     #[clap(long, default_value_t = 0.1)]
     alpha: f64,
 
-    /// subsamplVing threshold
+    /// subsampling threshold
     #[clap(long,default_value_t=f32::INFINITY)]
     subsample: f32,
 
@@ -63,8 +63,8 @@ struct Args {
     #[clap(long)]
     context_cut: bool,
 
-    /// initial weight (count) on first sense for each word
-    #[clap(long,default_value_t=-1.)]
+    /// initial weight (count) on first sense for each word; negative means use word frequency
+    #[clap(long, default_value_t = -1.)]
     init_count: f32,
 
     /// minimal probability of a meaning to contribute into gradients
@@ -161,19 +161,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // let batch = 64000;
     let dim = vm.dim_padded;
     let prototypes = args.prototypes;
 
-    let mut total_frq = 0u64;
-    for frq in vm.freqs.iter() {
-        total_frq += frq;
-    }
+    let total_frq: u64 = vm.freqs.iter().sum();
 
-    let init_count = -1;
     for w in 0..reduced_lexsize {
-        vm.counts[[w, 0]] = if init_count > 0 {
-            init_count as f32
+        vm.counts[[w, 0]] = if args.init_count > 0. {
+            args.init_count
         } else {
             vm.freqs[w] as f32
         };
@@ -181,26 +176,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let doc = corp.open_struct(&args.docstructure)?;
 
-    // let mut cntr = 0u64;
     let doc_cnt = doc.len();
-    // let mut doc_read = 0u64;
-    // let mut total_ll1 = 0.;
-    // let mut total_ll2 = 0.;
-    // let mut words_read = 0;
-
-    // let mut senses = 0;
-    // let mut max_senses = 0;
 
     let starttime = std::time::Instant::now();
 
-    let mut total_words = 0usize;
-    for (_id, cnt) in vm.freqs.iter().enumerate() {
-        total_words += *cnt as usize;
-    }
-    eprintln!("will visit {} positions per epoch", total_words);
-    total_words = (total_words as f64 * args.epochs) as usize;
+    let positions_per_epoch: usize = vm.freqs.iter().map(|&f| f as usize).sum();
+    eprintln!("will visit {} positions per epoch", positions_per_epoch);
+    let total_words = (positions_per_epoch as f64 * args.epochs) as usize;
     eprintln!("{} positions in total", total_words);
-    let _total_words = total_words;
 
     let words_read = std::sync::atomic::AtomicUsize::new(0);
 
@@ -225,6 +208,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut in_grad = Array::<f32, Ix2>::zeros((prototypes, dim));
         let mut out_grad = Array::<f32, Ix1>::zeros(dim);
         let mut z = Array::<f64, Ix1>::zeros(prototypes);
+        let mut doc_buf = Vec::new();
 
         let partsize = doc_cnt / args.threads;
         let startdoc = partsize * thread_id;
@@ -232,45 +216,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut total_ll1 = 0.0f64;
         let mut total_ll2 = 0.0f64;
         let mut local_words_read = 0;
+        let compute_ll = thread_id == 0;
+        let window = args.window as isize;
 
         for rawdoc in dociterm(doc.as_ref(), attr.as_ref(), &oid_to_nid, startdoc) {
-            let doc = preprocess(
+            preprocess_into(
                 &rawdoc,
                 freqs.as_slice().unwrap(),
                 total_frq,
-                args.min_freq,
                 args.subsample as f64,
                 &mut loc_rng,
+                &mut doc_buf,
             );
+            let doc = &doc_buf;
             let mut in_mut = in_vecs.as_mut().view_mut();
             let mut out_mut = out_vecs.as_mut().view_mut();
             let mut counts_mut = counts.as_mut().view_mut();
 
-            let lr1 = f64::max(
+            let lr = f64::max(
                 args.start_lr * (1. - local_words_read as f64 / (total_words as f64 + 1.)),
                 args.start_lr * 1e-4,
             );
-            let lr2 = lr1;
 
-            if thread_id == 0 {
+            if compute_ll {
                 let dur = reporttime.elapsed().as_secs_f64();
                 if dur > 1.0 {
                     let rws = local_words_read - words_read_last;
                     words_read_last = local_words_read;
                     let wps = rws as f64 / dur;
-                    let remaining_words = total_words - local_words_read;
-                    let remaining_secs = if wps != 0.0 {
-                        remaining_words / wps as usize
+                    let remaining_secs = if wps > 0.0 {
+                        (total_words - local_words_read) as f64 / wps
                     } else {
-                        0
+                        0.0
                     };
-                    let remaining_hours = remaining_secs / 3600;
-                    let remaining_mins = (remaining_secs % 3600) / 60;
                     reporttime = std::time::Instant::now();
-                    let elapsed = reporttime
-                        .checked_duration_since(starttime)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
+                    let elapsed = reporttime.duration_since(starttime).as_secs();
                     eprint!(
                         "\r[{}] visited {} positions out of {} ({:.2} %), {:.0} wps, {:02}h:{:02}m remaining, lr {:.5} ll {:.7}",
                         elapsed,
@@ -278,66 +258,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         total_words,
                         local_words_read as f64 / total_words as f64 * 100.0,
                         wps,
-                        remaining_hours,
-                        remaining_mins,
-                        lr1,
+                        remaining_secs as u64 / 3600,
+                        (remaining_secs as u64 % 3600) / 60,
+                        lr,
                         total_ll1,
-                        // senses as f32 / local_words_read as f32);
                     );
                 }
             }
 
             for i in 0..doc.len() {
                 let x = doc[i];
+                let j_lo = (i as isize - window).max(0) as usize;
+                let j_hi = (i as isize + window).min(doc.len() as isize) as usize;
 
-                // random reduce ... TODO
-                let window = args.window as isize;
+                var_init_z(&counts_mut, alpha, x, &mut z);
 
-                let _n_senses = var_init_z(&counts_mut, alpha, x, &mut z);
-                // senses += n_senses;
-
-                // max_senses = std::cmp::max(max_senses, n_senses);
-                for j in std::cmp::max(0, i as isize - window)
-                    ..std::cmp::min(doc.len() as isize, i as isize + window)
-                {
-                    if i as isize == j {
-                        continue;
-                    }
-                    let y = doc[j as usize];
-                    var_update_z(&in_mut, &out_mut, &code, &path, x, y, &mut z);
+                for j in j_lo..j_hi {
+                    if j == i { continue; }
+                    var_update_z(&in_mut, &out_mut, &code, &path, x, doc[j], &mut z);
                 }
 
                 exp_normalize(&mut z);
 
-                for j in std::cmp::max(0, i as isize - window)
-                    ..std::cmp::min(doc.len() as isize, i as isize + window)
-                {
-                    if i as isize == j {
-                        continue;
-                    }
-                    let y = doc[j as usize];
+                for j in j_lo..j_hi {
+                    if j == i { continue; }
                     let ll = in_place_update(
-                        &mut in_mut,
-                        &mut out_mut,
-                        &counts_mut,
-                        x,
-                        y,
-                        &z,
-                        &code,
-                        &path,
-                        lr1,
-                        &mut in_grad,
-                        &mut out_grad,
-                        args.sense_threshold,
-                        thread_id == 0,
+                        &mut in_mut, &mut out_mut, &counts_mut,
+                        x, doc[j], &z, &code, &path, lr,
+                        &mut in_grad, &mut out_grad,
+                        args.sense_threshold, compute_ll,
                     );
-                    if thread_id == 0 {
+                    if compute_ll {
                         total_ll2 += 1.;
                         total_ll1 += (ll - total_ll1) / total_ll2;
                     }
                 }
 
-                var_update_counts(&freqs, &mut counts_mut, x, &z, lr2);
+                var_update_counts(&freqs, &mut counts_mut, x, &z, lr);
             }
             local_words_read =
                 words_read.fetch_add(doc.len(), std::sync::atomic::Ordering::Relaxed);
@@ -382,12 +339,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!();
 
     let local_words_read = words_read.load(std::sync::atomic::Ordering::Relaxed);
-    // let local_words_read = local_words_read - args.threads;
+    let elapsed = starttime.elapsed().as_secs_f64();
     eprintln!(
-        "FINISHED: read {} words in {} epochs, {} wps",
+        "FINISHED: read {} words in {} epochs, {:.0} wps",
         local_words_read,
         args.epochs,
-        local_words_read as f32 / starttime.elapsed().as_secs() as f32
+        local_words_read as f64 / elapsed,
     );
 
     vm.in_vecs = std::sync::Arc::try_unwrap(in_vecs_m.into_inner())
@@ -413,49 +370,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn preprocess(
+fn preprocess_into(
     doc: &[u32],
     freqs: &[u64],
     total_frq: u64,
-    min_freq: u64,
     subsampling_threshold: f64,
     rng: &mut SmallRng,
-) -> Vec<u32> {
-    let mut out = Vec::with_capacity(doc.len());
+    out: &mut Vec<u32>,
+) {
+    out.clear();
     let u = distributions::Uniform::<f64>::new(0., 1.);
-    for id in doc {
-        let f = freqs[*id as usize];
-        if f < min_freq {
-            continue;
-        };
+    for &id in doc {
+        let f = freqs[id as usize];
         if u.sample(rng) < 1. - (subsampling_threshold / (f as f64 / total_frq as f64)).sqrt() {
             continue;
         }
-        out.push(*id);
+        out.push(id);
     }
-    out
 }
 
+/// Iterates over documents, wrapping around to the beginning, mapping original IDs to new IDs.
 struct DocIter<'a> {
     docpos: usize,
     doc: &'a dyn corp::structure::Struct,
     attr: &'a (dyn corp::corp::Attr + 'a),
-}
-
-fn dociter<'a>(
-    doc: &'a dyn corp::structure::Struct,
-    attr: &'a dyn corp::corp::Attr,
-    from: usize,
-) -> DocIter<'a> {
-    DocIter {
-        docpos: from,
-        doc,
-        attr,
-    }
-}
-
-struct DocIterM<'a> {
-    di: DocIter<'a>,
     oid_to_nid: &'a [u32],
 }
 
@@ -464,41 +402,9 @@ fn dociterm<'a>(
     attr: &'a dyn corp::corp::Attr,
     oid_to_nid: &'a [u32],
     from: usize,
-) -> DocIterM<'a> {
-    DocIterM {
-        di: dociter(doc, attr, from),
-        oid_to_nid,
-    }
+) -> DocIter<'a> {
+    DocIter { docpos: from, doc, attr, oid_to_nid }
 }
-
-impl Iterator for DocIterM<'_> {
-    type Item = Vec<u32>;
-    fn next(&mut self) -> Option<Vec<u32>> {
-        self.di.next().map(|v| {
-            v.iter()
-                .filter_map(|oid| match self.oid_to_nid[*oid as usize] {
-                    u32::MAX => None,
-                    nid => Some(nid),
-                })
-                .collect()
-        })
-    }
-}
-
-/* impl Iterator for DocIter<'_> {
-    type Item = Vec<u32>;
-    fn next(&mut self) -> Option<Vec<u32>> {
-        if self.docpos < self.doc.len() {
-            let beg = self.doc.beg_at(self.docpos as u64);
-            let end = self.doc.end_at(self.docpos as u64);
-            // println!("{}: {}, {}", self.docpos, beg, end);
-            let it = self.attr.iter_ids(beg);
-            let vals = it.take((end - beg) as usize).collect();
-            self.docpos += 1;
-            Some(vals)
-        } else { None }
-    }
-} */
 
 impl Iterator for DocIter<'_> {
     type Item = Vec<u32>;
@@ -508,9 +414,13 @@ impl Iterator for DocIter<'_> {
         }
         let beg = self.doc.beg_at(self.docpos as u64);
         let end = self.doc.end_at(self.docpos as u64);
-        // println!("{}: {}, {}", self.docpos, beg, end);
-        let it = self.attr.iter_ids(beg);
-        let vals = it.take((end - beg) as usize).collect();
+        let vals = self.attr.iter_ids(beg)
+            .take((end - beg) as usize)
+            .filter_map(|oid| match self.oid_to_nid[oid as usize] {
+                u32::MAX => None,
+                nid => Some(nid),
+            })
+            .collect();
         self.docpos += 1;
         Some(vals)
     }

@@ -9,9 +9,6 @@ use std::sync::OnceLock;
 
 type F = f64;
 
-// fn digamma(x: F) -> F { x.ln() - 0.5*x }
-// ^ bad, maybe use https://math.stackexchange.com/a/1446110
-
 /// Controls whether `sigmoid`/`logsigmoid` use precise `exp/log` math (slower) or a lookup-table
 /// approximation (faster). This is a compile-time choice on purpose to keep the hot loops free of
 /// runtime conditionals.
@@ -168,7 +165,6 @@ pub fn mean_beta(a: F, b: F) -> F {
 pub fn meanlog_beta(a: F, b: F) -> F {
     digamma(a) - digamma(a + b)
 }
-//fn mean_mirror(a: F, b: F) -> F { mean_beta(b, a) }
 pub fn meanlog_mirror(a: F, b: F) -> F {
     meanlog_beta(b, a)
 }
@@ -322,24 +318,16 @@ pub fn in_place_update<
     sense_threshold: f64,
     compute_ll: bool,
 ) -> f64 {
-    if simd::SIMD_ASSUME_ALIGNED_SLICES {
-        std::thread_local! {
-            static CHECKED_GRAD_ALIGNMENT: std::cell::Cell<bool> = std::cell::Cell::new(false);
-        }
-        CHECKED_GRAD_ALIGNMENT.with(|checked| {
-            if !checked.get() {
-                let dim = out_grad.len();
-                simd::assert_simd_preconditions(dim, out_grad.as_ptr(), "out_grad");
-                simd::assert_simd_preconditions(dim, in_grad.as_ptr(), "in_grad");
-                checked.set(true);
-            }
-        });
-    }
+    debug_assert!({
+        let dim = out_grad.len();
+        simd::assert_simd_preconditions(dim, out_grad.as_ptr(), "out_grad");
+        simd::assert_simd_preconditions(dim, in_grad.as_ptr(), "in_grad");
+        true
+    });
 
     let mut pr = 0.;
     let t = counts.len_of(Axis(1));
     let x = x as usize;
-    let _y = y as usize;
 
     debug_assert!(in_vecs.is_standard_layout());
     debug_assert!(out_vecs.is_standard_layout());
@@ -365,63 +353,52 @@ pub fn in_place_update<
     let paths_all = contig_slice(paths, "paths");
     let codelen = codes.len_of(Axis(1));
     debug_assert_eq!(paths.len_of(Axis(1)), codelen);
-    let codes_row = &codes_all[y as usize * codelen..(y as usize + 1) * codelen];
-    let paths_row = &paths_all[y as usize * codelen..(y as usize + 1) * codelen];
+    let y = y as usize;
+    let codes_row = &codes_all[y * codelen..(y + 1) * codelen];
+    let paths_row = &paths_all[y * codelen..(y + 1) * codelen];
 
     let out_all = contig_slice_mut(out_vecs, "out_vecs");
+    let in_all = contig_slice(in_vecs, "in_vecs");
+    let x_base = x * t * dim;
+    let in_x = &in_all[x_base..x_base + t * dim];
 
-    {
-        let in_all = contig_slice(in_vecs, "in_vecs");
-        let x_base = x * t * dim;
-        let in_x = &in_all[x_base..x_base + t * dim];
-
-        for i in 0..codes_row.len() {
-            let code = codes_row[i];
-            if code == u8::MAX {
-                break;
-            }
-
-            let code_f = code as f64;
-            let sign = 1.0f32 - 2.0f32 * (code as f32);
-
-            out_grad_slice.fill(0.0);
-
-            let path = paths_row[i] as usize;
-            let out_off = path * dim;
-
-            {
-                let out_slice: &[f32] = &out_all[out_off..out_off + dim];
-                for k in 0..t {
-                    let zk = z_slice[k];
-                    if zk < sense_threshold {
-                        continue;
-                    }
-                    let in_slice = &in_x[k * dim..(k + 1) * dim];
-                    let f = simd::dot_f32(in_slice, out_slice);
-
-                    if compute_ll {
-                        pr += zk * (logsigmoid_f32(f * sign) as f64);
-                    }
-
-                    let d = (1. - code_f) - (sigmoid_f32(f) as f64);
-                    let g = (zk * lr * d) as f32;
-
-                    {
-                        let in_grad_row = &mut in_grad_slice[k * dim..(k + 1) * dim];
-                        simd::axpy_f32(in_grad_row, g, out_slice);
-                    }
-
-                    {
-                        simd::axpy_f32(out_grad_slice, g, in_slice);
-                    }
-                }
-            }
-
-            {
-                let out_row = &mut out_all[out_off..out_off + dim];
-                simd::axpy_f32(out_row, 1.0, out_grad_slice);
-            }
+    for i in 0..codes_row.len() {
+        let code = codes_row[i];
+        if code == u8::MAX {
+            break;
         }
+
+        let code_f = code as f64;
+        let sign = 1.0f32 - 2.0f32 * (code as f32);
+
+        out_grad_slice.fill(0.0);
+
+        let path = paths_row[i] as usize;
+        let out_off = path * dim;
+        let out_slice: &[f32] = &out_all[out_off..out_off + dim];
+
+        for k in 0..t {
+            let zk = z_slice[k];
+            if zk < sense_threshold {
+                continue;
+            }
+            let in_slice = &in_x[k * dim..(k + 1) * dim];
+            let f = simd::dot_f32(in_slice, out_slice);
+
+            if compute_ll {
+                pr += zk * (logsigmoid_f32(f * sign) as f64);
+            }
+
+            let d = (1. - code_f) - (sigmoid_f32(f) as f64);
+            let g = (zk * lr * d) as f32;
+
+            let in_grad_row = &mut in_grad_slice[k * dim..(k + 1) * dim];
+            simd::axpy_f32(in_grad_row, g, out_slice);
+            simd::axpy_f32(out_grad_slice, g, in_slice);
+        }
+
+        let out_row = &mut out_all[out_off..out_off + dim];
+        simd::axpy_f32(out_row, 1.0, out_grad_slice);
     }
 
     let in_all_mut = contig_slice_mut(in_vecs, "in_vecs");
@@ -449,10 +426,13 @@ pub fn var_update_counts<
     local_counts: &ArrayBase<C, Ix1>,
     lr2: f64,
 ) {
-    for k in 0..counts.len_of(Axis(1)) {
-        counts[[x as usize, k]] += (lr2
-            * (local_counts[[k]] * freqs[[x as usize]] as f64 - counts[[x as usize, k]] as f64))
-            as f32;
+    let freq = freqs[x as usize] as f64;
+    let nmeanings = counts.len_of(Axis(1));
+    let counts_row = &mut contig_slice_mut(counts, "counts")
+        [x as usize * nmeanings..(x as usize + 1) * nmeanings];
+    let z_slice = contig_slice(local_counts, "local_counts");
+    for k in 0..nmeanings {
+        counts_row[k] += (lr2 * (z_slice[k] * freq - counts_row[k] as f64)) as f32;
     }
 }
 
@@ -468,74 +448,3 @@ pub fn exp_normalize(x: &mut Array<f64, Ix1>) {
     }
 }
 
-fn _cast_slice<T>(s: &[T]) -> &[u8] {
-    let nbytes = std::mem::size_of_val(s);
-    unsafe { std::slice::from_raw_parts(s.as_ptr() as *const u8, nbytes) }
-}
-
-/*
-fn load_dict(path: &str) -> Result<(Vec<u64>, Vec<String>), Box<dyn std::error::Error>> {
-    let br = std::io::BufReader::new(
-        std::fs::File::open(path.to_string())?
-    );
-
-    let vr: Result<Vec<(u64, usize, String)>, Box<dyn std::error::Error>>
-            = br.lines().enumerate().map(|(lineno, line)| {
-        let l = line.unwrap();
-        let parts: Vec<_> = l.split_whitespace().collect();
-        if parts.len() != 2 {
-            return Err("too many whitespace separators in dictionary".into());
-        }
-        let word = parts[0];
-        let frq = parts[1].parse::<u64>()?;
-        Ok((frq, lineno, word.to_string()))
-    }).collect();
-    let mut v = vr?;
-
-    v.sort();
-    v.reverse();
-    //v.sort_by_key(|w| Reverse(*w));
-
-    let (freqs, ix2word): (Vec<u64>, Vec<String>) = v.into_iter().map(|(f, _, w)| (f, w)).unzip();
-    Ok((freqs, ix2word))
-}
-
-fn save_model<F>(path: &str, vm: &VectorModel, min_prob: f64, id2word: F)
-        -> Result<(), Box<dyn std::error::Error>>
-        where F: Fn(u32) -> String{
-    let mut vecf = std::io::BufWriter::new(
-        std::fs::File::create(path.to_string() + ".txt")?);
-
-    let s = vm.in_vecs.shape();
-    write!(vecf, "{} {} {}\n", s[0], s[2], s[1])?;
-    write!(vecf, "{} {}\n", vm.alpha, 0)?;
-    write!(vecf, "{}\n", vm.code.len_of(Axis(1)))?;
-
-    for &e in vm.freqs.iter() { vecf.write(&e.to_le_bytes())?; };
-    for &e in vm.code.iter() { vecf.write(&e.to_le_bytes())?; };
-    for &e in vm.path.iter() { vecf.write(&e.to_le_bytes())?; };
-    for &e in vm.counts.iter() { vecf.write(&e.to_le_bytes())?; };
-    for &e in vm.out_vecs.iter() { vecf.write(&e.to_le_bytes())?; };
-    //write!(vecf, "\n")?;
-
-    let mut z = Array::<f64, Ix1>::zeros(s[1]);
-
-    for v in 0..s[0] {
-        let nsenses = expected_pi(&vm, v as u32, &mut z);
-        write!(vecf, "{}\n", id2word(v as u32))?;
-        write!(vecf, "{}\n", nsenses)?;
-        for k in 0..s[1] {
-            if z[k] < min_prob { continue; }
-            write!(vecf, "{}\n", k+1)?;
-            for e in vm.in_vecs.slice(s![v, k, ..]).iter() {
-                vecf.write(&e.to_le_bytes())?;
-            };
-            write!(vecf, "\n")?;
-        }
-    }
-
-    vecf.flush()?;
-    std::mem::drop(vecf);
-
-    Ok(())
-}*/
