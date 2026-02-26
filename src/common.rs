@@ -168,13 +168,18 @@ fn logsigmoid_f32(x: f32) -> f32 {
     }
 }
 
-pub fn mean_beta(a: F, b: F) -> F {
+#[inline(always)]
+fn mean_beta(a: F, b: F) -> F {
     a / (a + b)
 }
-pub fn meanlog_beta(a: F, b: F) -> F {
+
+#[inline(always)]
+fn meanlog_beta(a: F, b: F) -> F {
     digamma(a) - digamma(a + b)
 }
-pub fn meanlog_mirror(a: F, b: F) -> F {
+
+#[inline(always)]
+fn meanlog_mirror(a: F, b: F) -> F {
     meanlog_beta(b, a)
 }
 
