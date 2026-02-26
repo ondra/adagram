@@ -33,7 +33,7 @@ struct Args {
     minprob: f64,
 
     /// compact output: one line per sense with neighbors in a single space-separated column
-    #[clap(long, default_value_t = false)]
+    #[clap(long, default_value_t = true)]
     compact: bool,
 
     /// print informative progress messages to stderr
