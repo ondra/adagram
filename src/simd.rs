@@ -58,9 +58,7 @@ pub(crate) fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
             let ap = a.as_ptr() as *const SimdF32;
             let bp = b.as_ptr() as *const SimdF32;
             for i in 0..n {
-                let av = core::ptr::read(ap.add(i));
-                let bv = core::ptr::read(bp.add(i));
-                sum = sum + av * bv;
+                sum = sum + *ap.add(i) * *bp.add(i);
             }
         }
         return sum.reduce_add();
@@ -113,9 +111,7 @@ pub(crate) fn axpy_f32(y: &mut [f32], a: f32, x: &[f32]) {
             let yp = y.as_mut_ptr() as *mut SimdF32;
             let xp = x.as_ptr() as *const SimdF32;
             for i in 0..n {
-                let yv = core::ptr::read(yp.add(i));
-                let xv = core::ptr::read(xp.add(i));
-                core::ptr::write(yp.add(i), yv + xv * av);
+                *yp.add(i) += *xp.add(i) * av;
             }
         }
         return;
