@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let norm = std::env::var("UNNORMED").is_err();
     if norm {
         eprintln!("normalizing vectors");
-        vm.norm();
+        adagram::nn::vm_norm(&mut vm);
     }
     let vm = vm; // drop mut
 

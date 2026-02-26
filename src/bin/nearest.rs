@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (mut vm, id2str) = VectorModel::load_model(&args.model)?;
 
     if !args.no_norm {
-        vm.norm();
+        adagram::nn::vm_norm(&mut vm);
     }
     let vm = vm; // drop mut
 

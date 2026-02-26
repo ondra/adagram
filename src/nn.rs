@@ -1,12 +1,18 @@
 use crate::adagram::VectorModel;
 use crate::common::expected_pi;
+use crate::simd;
 use binary_heap_plus::BinaryHeap;
 use ndarray::prelude::*;
+use multiversion::multiversion;
+
+#[repr(C, align(32))]
+#[derive(Clone, Copy)]
+struct AlignedChunk([f32; 8]);
 
 pub struct DenseSensePool {
     dim: usize,
     ids: Vec<(u32, u32)>,
-    vecs: Vec<f32>,
+    vecs: Vec<AlignedChunk>,
 }
 
 impl DenseSensePool {
@@ -16,32 +22,41 @@ impl DenseSensePool {
     pub fn is_empty(&self) -> bool {
         self.ids.is_empty()
     }
-}
-
-fn norm_l2<S, D>(a: &ArrayBase<S, D>) -> f32
-where
-    S: ndarray::Data<Elem = f32>,
-    D: ndarray::Dimension,
-{
-    a.iter().map(|x| *x * *x).sum::<f32>().sqrt()
-}
-
-impl VectorModel {
-    /// make all input vectors unit length
-    pub fn norm(&mut self) {
-        let ii = self.in_vecs.len_of(Axis(0));
-        let jj = self.in_vecs.len_of(Axis(1));
-        for i in 0..ii {
-            for j in 0..jj {
-                let mut v = self.in_vecs.slice_mut(s![i, j, ..]);
-                let n = norm_l2(&v);
-                v.iter_mut().for_each(|e| *e /= n);
-            }
+    fn vecs_f32(&self) -> &[f32] {
+        if self.vecs.is_empty() {
+            return &[];
         }
-        self.normed = true;
+        unsafe {
+            std::slice::from_raw_parts(self.vecs.as_ptr() as *const f32, self.vecs.len() * 8)
+        }
     }
 }
 
+#[inline(always)]
+fn norm_l2_slice(a: &[f32]) -> f32 {
+    simd::dot_f32(a, a).sqrt()
+}
+
+
+#[multiversion(targets = "simd")]
+/// make all input vectors unit length
+pub fn vm_norm(vm: &mut VectorModel) {
+    let ii = vm.in_vecs.len_of(Axis(0));
+    let jj = vm.in_vecs.len_of(Axis(1));
+    let dim = vm.in_vecs.len_of(Axis(2));
+    let in_all = vm.in_vecs.as_slice_mut().unwrap();
+    for i in 0..ii {
+        for j in 0..jj {
+            let offset = (i * jj + j) * dim;
+            let v = &mut in_all[offset..offset + dim];
+            let n = norm_l2_slice(v);
+            v.iter_mut().for_each(|e| *e /= n);
+        }
+    }
+    vm.normed = true;
+}
+
+#[multiversion(targets = "simd")]
 pub fn sim(
     vm: &VectorModel,
     head_id1: usize,
@@ -49,17 +64,19 @@ pub fn sim(
     head_id2: usize,
     senseno2: usize,
 ) -> f32 {
-    let qvec_r1 = vm.in_vecs.slice(s![head_id1, senseno1, ..]);
-    let qnorm1 = norm_l2(&qvec_r1);
-    let qvec1 = qvec_r1.mapv(|v| v / qnorm1);
+    let in_all = vm.in_vecs.as_slice().unwrap();
+    let jj = vm.in_vecs.len_of(Axis(1));
+    let dim = vm.in_vecs.len_of(Axis(2));
 
-    let qvec_r2 = vm.in_vecs.slice(s![head_id2, senseno2, ..]);
-    let qnorm2 = norm_l2(&qvec_r2);
-    let qvec2 = qvec_r2.mapv(|v| v / qnorm2);
+    let off1 = (head_id1 * jj + senseno1) * dim;
+    let s1 = &in_all[off1..off1 + dim];
+    let off2 = (head_id2 * jj + senseno2) * dim;
+    let s2 = &in_all[off2..off2 + dim];
 
-    qvec1.dot(&qvec2)
+    simd::dot_f32(s1, s2) / (norm_l2_slice(s1) * norm_l2_slice(s2))
 }
 
+#[multiversion(targets = "simd")]
 pub fn sim_normed(
     vm: &VectorModel,
     head_id1: usize,
@@ -67,11 +84,19 @@ pub fn sim_normed(
     head_id2: usize,
     senseno2: usize,
 ) -> f32 {
-    let qvec1 = vm.in_vecs.slice(s![head_id1, senseno1, ..]);
-    let qvec2 = vm.in_vecs.slice(s![head_id2, senseno2, ..]);
-    qvec1.dot(&qvec2)
+    let in_all = vm.in_vecs.as_slice().unwrap();
+    let jj = vm.in_vecs.len_of(Axis(1));
+    let dim = vm.in_vecs.len_of(Axis(2));
+
+    let off1 = (head_id1 * jj + senseno1) * dim;
+    let s1 = &in_all[off1..off1 + dim];
+    let off2 = (head_id2 * jj + senseno2) * dim;
+    let s2 = &in_all[off2..off2 + dim];
+
+    simd::dot_f32(s1, s2)
 }
 
+#[multiversion(targets = "simd")]
 pub fn nearest(
     vm: &VectorModel,
     head_id: usize,
@@ -81,10 +106,12 @@ pub fn nearest(
 ) -> Vec<(u32, u32, f32)> {
     let ii = vm.in_vecs.len_of(Axis(0));
     let jj = vm.in_vecs.len_of(Axis(1));
+    let dim = vm.in_vecs.len_of(Axis(2));
+    let in_all = vm.in_vecs.as_slice().unwrap();
 
-    let qvec_r = vm.in_vecs.slice(s![head_id, senseno, ..]);
-    let qnorm = norm_l2(&qvec_r);
-    let qvec = qvec_r.mapv(|v| v / qnorm);
+    let q_off = (head_id * jj + senseno) * dim;
+    let q = &in_all[q_off..q_off + dim];
+    let qnorm = norm_l2_slice(q);
 
     let sf = |(_id1, _s1, sim1): &(u32, u32, f32), (_id2, _s2, sim2): &(u32, u32, f32)| {
         sim2.partial_cmp(sim1)
@@ -104,8 +131,9 @@ pub fn nearest(
                 if vm.counts[[i, j]] < min_count as f32 {
                     continue;
                 }
-                let v = vm.in_vecs.slice(s![i, j, ..]);
-                let sim = qvec.dot(&v);
+                let v_off = (i * jj + j) * dim;
+                let v = &in_all[v_off..v_off + dim];
+                let sim = simd::dot_f32(q, v) / qnorm;
                 heap.push((i as u32, j as u32, sim));
                 if heap.len() > top_k {
                     heap.pop();
@@ -118,8 +146,9 @@ pub fn nearest(
                 if vm.counts[[i, j]] < min_count as f32 {
                     continue;
                 }
-                let v = vm.in_vecs.slice(s![i, j, ..]);
-                let sim = qvec.dot(&v) / norm_l2(&v);
+                let v_off = (i * jj + j) * dim;
+                let v = &in_all[v_off..v_off + dim];
+                let sim = simd::dot_f32(q, v) / (qnorm * norm_l2_slice(v));
                 heap.push((i as u32, j as u32, sim));
                 if heap.len() > top_k {
                     heap.pop();
@@ -133,13 +162,7 @@ pub fn nearest(
     hv
 }
 
-fn norm_l2v<D>(a: ArrayView<'_, f32, D>) -> f32
-where
-    D: ndarray::Dimension,
-{
-    a.fold(0.0, |l, r| l + *r * *r).sqrt()
-}
-
+#[multiversion(targets = "simd")]
 pub fn nearest_mmul(
     vm: &VectorModel,
     head_id: usize,
@@ -149,6 +172,8 @@ pub fn nearest_mmul(
 ) -> Vec<(usize, Vec<(u32, u32, f32)>)> {
     let ii = vm.in_vecs.len_of(Axis(0));
     let jj = vm.in_vecs.len_of(Axis(1));
+    let dim = vm.in_vecs.len_of(Axis(2));
+    let in_all = vm.in_vecs.as_slice().unwrap();
 
     let sf = |(_id1, _s1, sim1): &(u32, u32, f32), (_id2, _s2, sim2): &(u32, u32, f32)| {
         sim2.partial_cmp(sim1)
@@ -171,12 +196,14 @@ pub fn nearest_mmul(
         return vec![];
     }
 
-    let qvecs_r = vm
-        .in_vecs
-        .slice(s![head_id, .., ..])
-        .select(Axis(0), &senses);
-    let qnorms = qvecs_r.map_axis(Axis(1), norm_l2v);
-    let qvecs = qvecs_r / qnorms.insert_axis(Axis(1));
+    let q_slices: Vec<&[f32]> = senses
+        .iter()
+        .map(|&s| {
+            let off = (head_id * jj + s) * dim;
+            &in_all[off..off + dim]
+        })
+        .collect();
+    let qnorms: Vec<f32> = q_slices.iter().map(|q| norm_l2_slice(q)).collect();
 
     let mut heaps: Vec<_> = (0..senses.len()).map(|_i| BinaryHeap::new_by(sf)).collect();
 
@@ -186,10 +213,11 @@ pub fn nearest_mmul(
                 if vm.counts[[i, j]] < min_count as f32 {
                     continue;
                 }
-                let v = vm.in_vecs.slice(s![i, j, ..]);
-                let sim = qvecs.dot(&v);
-                for qj in 0..senses.len() {
-                    heaps[qj].push((i as u32, j as u32, sim[qj]));
+                let v_off = (i * jj + j) * dim;
+                let v = &in_all[v_off..v_off + dim];
+                for (qj, q) in q_slices.iter().enumerate() {
+                    let sim = simd::dot_f32(q, v) / qnorms[qj];
+                    heaps[qj].push((i as u32, j as u32, sim));
                     if heaps[qj].len() > top_k {
                         heaps[qj].pop();
                     }
@@ -202,10 +230,12 @@ pub fn nearest_mmul(
                 if vm.counts[[i, j]] < min_count as f32 {
                     continue;
                 }
-                let v = vm.in_vecs.slice(s![i, j, ..]);
-                let sim = qvecs.dot(&v) / norm_l2(&v);
-                for qj in 0..senses.len() {
-                    heaps[qj].push((i as u32, j as u32, sim[qj]));
+                let v_off = (i * jj + j) * dim;
+                let v = &in_all[v_off..v_off + dim];
+                let vnorm = norm_l2_slice(v);
+                for (qj, q) in q_slices.iter().enumerate() {
+                    let sim = simd::dot_f32(q, v) / (qnorms[qj] * vnorm);
+                    heaps[qj].push((i as u32, j as u32, sim));
                     if heaps[qj].len() > top_k {
                         heaps[qj].pop();
                     }
@@ -226,13 +256,17 @@ pub fn nearest_mmul(
     hvs
 }
 
+#[multiversion(targets = "simd")]
 pub fn build_dense_sense_pool(vm: &VectorModel, min_count: usize) -> DenseSensePool {
     let ii = vm.in_vecs.len_of(Axis(0));
     let jj = vm.in_vecs.len_of(Axis(1));
     let dim = vm.in_vecs.len_of(Axis(2));
+    let in_all = vm.in_vecs.as_slice().unwrap();
+    let chunks_per_vec = dim / 8;
+    debug_assert_eq!(dim % 8, 0);
 
     let mut ids = Vec::<(u32, u32)>::new();
-    let mut vecs = Vec::<f32>::new();
+    let mut vecs = Vec::<AlignedChunk>::new();
 
     for i in 0..ii {
         for j in 0..jj {
@@ -240,8 +274,13 @@ pub fn build_dense_sense_pool(vm: &VectorModel, min_count: usize) -> DenseSenseP
                 continue;
             }
             ids.push((i as u32, j as u32));
-            let v = vm.in_vecs.slice(s![i, j, ..]);
-            vecs.extend(v.iter().copied());
+            let off = (i * jj + j) * dim;
+            let v = &in_all[off..off + dim];
+            for c in 0..chunks_per_vec {
+                let s = c * 8;
+                let chunk: [f32; 8] = v[s..s + 8].try_into().unwrap();
+                vecs.push(AlignedChunk(chunk));
+            }
         }
     }
 
@@ -270,6 +309,7 @@ fn push_top_k(best: &mut Vec<(usize, f32)>, cand_ix: usize, sim: f32, top_k: usi
     }
 }
 
+#[multiversion(targets = "simd")]
 pub fn nearest_mmul_dense_pool(
     vm: &VectorModel,
     pool: &DenseSensePool,
@@ -279,6 +319,8 @@ pub fn nearest_mmul_dense_pool(
 ) -> Vec<(usize, Vec<(u32, u32, f32)>)> {
     debug_assert!(vm.normed);
     let jj = vm.in_vecs.len_of(Axis(1));
+    let dim = pool.dim;
+    debug_assert_eq!(dim, vm.in_vecs.len_of(Axis(2)));
 
     let mut pi = Array::<f64, Ix1>::zeros(jj);
     let _n_senses = expected_pi(&vm.counts, vm.alpha, head_id as u32, &mut pi, min_prob);
@@ -291,43 +333,29 @@ pub fn nearest_mmul_dense_pool(
         return vec![];
     }
 
-    let dim = pool.dim;
-    debug_assert_eq!(dim, vm.in_vecs.len_of(Axis(2)));
+    let in_all = vm.in_vecs.as_slice().unwrap();
+    let pool_f32 = pool.vecs_f32();
 
-    let qvecs = vm
-        .in_vecs
-        .slice(s![head_id, .., ..])
-        .select(Axis(0), &senses);
+    let q_slices: Vec<&[f32]> = senses
+        .iter()
+        .map(|&s| {
+            let off = (head_id * jj + s) * dim;
+            &in_all[off..off + dim]
+        })
+        .collect();
 
     let mut bests: Vec<Vec<(usize, f32)>> = (0..senses.len())
         .map(|_i| Vec::with_capacity(top_k))
         .collect();
 
     let n_cands = pool.ids.len();
-    let cand = ArrayView2::from_shape((n_cands, dim), pool.vecs.as_slice())
-        .expect("dense pool vecs must be contiguous");
 
-    const BLOCK: usize = 4096;
-    let mut sims = Array2::<f32>::zeros((senses.len(), BLOCK));
-
-    let mut start = 0usize;
-    while start < n_cands {
-        let end = (start + BLOCK).min(n_cands);
-        let width = end - start;
-
-        let cand_block = cand.slice(s![start..end, ..]);
-        let mut sims_view = sims.slice_mut(s![.., 0..width]);
-        sims_view.fill(0.0);
-        ndarray::linalg::general_mat_mul(1.0, &qvecs, &cand_block.t(), 0.0, &mut sims_view);
-
-        for qj in 0..senses.len() {
-            for bi in 0..width {
-                let cand_ix = start + bi;
-                push_top_k(&mut bests[qj], cand_ix, sims_view[(qj, bi)], top_k);
-            }
+    for ci in 0..n_cands {
+        let cand = &pool_f32[ci * dim..(ci + 1) * dim];
+        for (qj, q) in q_slices.iter().enumerate() {
+            let sim = simd::dot_f32(q, cand);
+            push_top_k(&mut bests[qj], ci, sim, top_k);
         }
-
-        start = end;
     }
 
     let mut out = Vec::with_capacity(senses.len());

@@ -443,6 +443,7 @@ pub fn var_update_counts<
     }
 }
 
+#[multiversion(targets = "simd")]
 pub fn exp_normalize(x: &mut Array<f64, Ix1>) {
     let max_x = x.fold(f64::MIN, |acc, e| if *e > acc { *e } else { acc });
     let mut sum_x = 0f64;
