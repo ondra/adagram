@@ -7,6 +7,8 @@ use crate::simd;
 use spfunc::gamma::digamma;
 use std::sync::OnceLock;
 
+use multiversion::multiversion;
+
 /// Check that a pointer and dimension satisfy SIMD alignment requirements.
 /// Panics if `SIMD_ASSUME_ALIGNED_SLICES` is enabled and the preconditions are violated.
 #[inline(always)]
@@ -176,6 +178,7 @@ pub fn meanlog_mirror(a: F, b: F) -> F {
     meanlog_beta(b, a)
 }
 
+#[multiversion(targets = "simd")]
 pub fn expected_pi<C: Data<Elem = f32>, Z: DataMut<Elem = f64>>(
     counts: &ArrayBase<C, Ix2>,
     alpha: f64,
@@ -206,6 +209,7 @@ pub fn expected_pi<C: Data<Elem = f32>, Z: DataMut<Elem = f64>>(
     senses
 }
 
+#[multiversion(targets = "simd")]
 pub fn var_init_z<C: Data<Elem = f32>, Z: DataMut<Elem = f64>>(
     counts: &ArrayBase<C, Ix2>,
     alpha: f64,
@@ -242,6 +246,7 @@ pub fn var_init_z<C: Data<Elem = f32>, Z: DataMut<Elem = f64>>(
     senses
 }
 
+#[multiversion(targets = "simd")]
 pub fn var_update_z<
     I: Data<Elem = f32>,
     O: Data<Elem = f32>,
@@ -302,6 +307,7 @@ pub fn var_update_z<
     }
 }
 
+#[multiversion(targets = "simd")]
 pub fn in_place_update<
     I: ndarray::DataMut<Elem = f32>,
     O: ndarray::DataMut<Elem = f32>,
@@ -415,6 +421,7 @@ pub fn in_place_update<
     pr
 }
 
+#[multiversion(targets = "simd")]
 pub fn var_update_counts<
     A: ndarray::Data<Elem = u64>,
     B: ndarray::DataMut<Elem = f32>,
