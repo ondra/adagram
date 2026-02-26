@@ -7,6 +7,13 @@ use crate::simd;
 use spfunc::gamma::digamma;
 use std::sync::OnceLock;
 
+/// Check that a pointer and dimension satisfy SIMD alignment requirements.
+/// Panics if `SIMD_ASSUME_ALIGNED_SLICES` is enabled and the preconditions are violated.
+#[inline(always)]
+pub fn assert_simd_aligned(dim_padded: usize, base_ptr: *const f32, what: &str) {
+    simd::assert_simd_preconditions(dim_padded, base_ptr, what);
+}
+
 type F = f64;
 
 /// Controls whether `sigmoid`/`logsigmoid` use precise `exp/log` math (slower) or a lookup-table
@@ -318,13 +325,6 @@ pub fn in_place_update<
     sense_threshold: f64,
     compute_ll: bool,
 ) -> f64 {
-    debug_assert!({
-        let dim = out_grad.len();
-        simd::assert_simd_preconditions(dim, out_grad.as_ptr(), "out_grad");
-        simd::assert_simd_preconditions(dim, in_grad.as_ptr(), "in_grad");
-        true
-    });
-
     let mut pr = 0.;
     let t = counts.len_of(Axis(1));
     let x = x as usize;

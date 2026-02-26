@@ -207,6 +207,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut in_grad = Array::<f32, Ix2>::zeros((prototypes, dim));
         let mut out_grad = Array::<f32, Ix1>::zeros(dim);
+        assert_simd_aligned(dim, in_grad.as_ptr(), "in_grad");
+        assert_simd_aligned(dim, out_grad.as_ptr(), "out_grad");
         let mut z = Array::<f64, Ix1>::zeros(prototypes);
         let mut doc_buf = Vec::new();
 
