@@ -71,6 +71,10 @@ struct Args {
     #[clap(long)]
     sampleconc: Option<usize>,
 
+    /// subcorpus file path (binary file of sorted (u64,u64) range pairs)
+    #[clap(long)]
+    subcorpus: Option<String>,
+
     /// print informative progress messages to stderr
     #[clap(short, long, default_value_t = false)]
     verbose: bool,
@@ -78,7 +82,12 @@ struct Args {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    let corpus = corp::corp::Corpus::open(&args.corpname)?;
+
+    let corpus: Box<dyn corp::corp::CorpusLike> = match &args.subcorpus {
+        Some(subcpath) => Box::new(corp::subcorp::SubCorpus::from_corpus(
+            corp::corp::Corpus::open(&args.corpname)?, subcpath)?),
+        None => Box::new(corp::corp::Corpus::open(&args.corpname)?),
+    };
 
     let tpb = rayon::ThreadPoolBuilder::new().thread_name(|tid| format!("rayon_worker{}", tid));
     if args.nthreads != 0 {

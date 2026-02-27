@@ -91,6 +91,10 @@ struct Args {
     /// document structure -- do not cross begs or ends
     #[clap(long, default_value = "doc")]
     docstructure: String,
+
+    /// subcorpus file path (binary file of sorted (u64,u64) range pairs)
+    #[clap(long)]
+    subcorpus: Option<String>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> { truemain() }
@@ -103,14 +107,23 @@ fn truemain() -> Result<(), Box<dyn std::error::Error>> {
     let tmpoutpath = args.outpath.to_string() + ".tmp";
     let mut outfile = std::fs::File::create(&tmpoutpath)?;
 
-    let corp = corp::corp::Corpus::open(&args.corpname)?;
-    let attr: Box<dyn corp::corp::Attr> = corp.open_attribute(&args.attrname)?;
+    let (corpus, ranges): (Box<dyn corp::corp::CorpusLike>, Option<std::sync::Arc<corp::subcorp::Ranges>>) = match &args.subcorpus {
+        Some(subcpath) => {
+            let sc = corp::subcorp::SubCorpus::from_corpus(
+                corp::corp::Corpus::open(&args.corpname)?, subcpath)?;
+            let r = sc.ranges().clone();
+            (Box::new(sc), Some(r))
+        }
+        None => (Box::new(corp::corp::Corpus::open(&args.corpname)?), None),
+    };
+    let attr = corpus.open_attribute(&args.attrname)?;
+    let frq = attr.get_freq("frq")?;
 
     let lexsize = attr.id_range();
     let mut ofreqs: Vec<u64> = vec![0u64; lexsize as usize];
     let mut ixs: Vec<u32> = Vec::new();
     for id in 0..lexsize {
-        let freq = attr.frq(id);
+        let freq = frq.frq(id);
         ofreqs[id as usize] = freq;
         if freq >= args.min_freq {
             ixs.push(id);
@@ -179,9 +192,12 @@ fn truemain() -> Result<(), Box<dyn std::error::Error>> {
         };
     }
 
-    let doc = corp.open_struct(&args.docstructure)?;
+    let doc = corpus.open_struct(&args.docstructure)?;
 
-    let doc_cnt = doc.len();
+    let doc_cnt = match &ranges {
+        Some(r) => corp::subcorp::count_filtered_structs(doc.as_ref(), r),
+        None => doc.len(),
+    };
 
     let starttime = std::time::Instant::now();
 
@@ -239,7 +255,7 @@ fn truemain() -> Result<(), Box<dyn std::error::Error>> {
             global
         };
 
-        for rawdoc in dociterm(doc.as_ref(), attr.as_ref(), &oid_to_nid, startdoc) {
+        for rawdoc in dociterm(doc.as_ref(), attr.as_ref(), &oid_to_nid, startdoc, ranges.as_deref()) {
             preprocess_into(
                 &rawdoc,
                 freqs.as_slice().unwrap(),
@@ -416,11 +432,14 @@ fn preprocess_into(
 }
 
 /// Iterates over documents, wrapping around to the beginning, mapping original IDs to new IDs.
+/// When ranges is set, skips documents not fully contained within the subcorpus ranges.
 struct DocIter<'a> {
     docpos: usize,
     doc: &'a dyn corp::structure::Struct,
     attr: &'a (dyn corp::corp::Attr + 'a),
     oid_to_nid: &'a [u32],
+    ranges: Option<&'a corp::subcorp::Ranges>,
+    docs_seen: usize,
 }
 
 fn dociterm<'a>(
@@ -428,26 +447,43 @@ fn dociterm<'a>(
     attr: &'a dyn corp::corp::Attr,
     oid_to_nid: &'a [u32],
     from: usize,
+    ranges: Option<&'a corp::subcorp::Ranges>,
 ) -> DocIter<'a> {
-    DocIter { docpos: from, doc, attr, oid_to_nid }
+    DocIter { docpos: from, doc, attr, oid_to_nid, ranges, docs_seen: 0 }
 }
 
 impl Iterator for DocIter<'_> {
     type Item = Vec<u32>;
     fn next(&mut self) -> Option<Vec<u32>> {
-        if self.docpos >= self.doc.len() {
-            self.docpos = 0;
+        let total = self.doc.len();
+        loop {
+            if self.docpos >= total {
+                self.docpos = 0;
+            }
+            if self.docs_seen >= total {
+                // Full wrap-around with no match — avoid infinite loop
+                return None;
+            }
+            let beg = self.doc.beg_at(self.docpos as u64);
+            let end = self.doc.end_at(self.docpos as u64);
+            self.docpos += 1;
+            self.docs_seen += 1;
+
+            if let Some(r) = self.ranges {
+                if !r.contains_range(beg, end) {
+                    continue;
+                }
+            }
+            self.docs_seen = 0;
+
+            let vals = self.attr.iter_ids(beg)
+                .take((end - beg) as usize)
+                .filter_map(|oid| match self.oid_to_nid[oid as usize] {
+                    u32::MAX => None,
+                    nid => Some(nid),
+                })
+                .collect();
+            return Some(vals);
         }
-        let beg = self.doc.beg_at(self.docpos as u64);
-        let end = self.doc.end_at(self.docpos as u64);
-        let vals = self.attr.iter_ids(beg)
-            .take((end - beg) as usize)
-            .filter_map(|oid| match self.oid_to_nid[oid as usize] {
-                u32::MAX => None,
-                nid => Some(nid),
-            })
-            .collect();
-        self.docpos += 1;
-        Some(vals)
     }
 }
