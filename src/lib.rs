@@ -4,6 +4,5 @@ pub mod diachronic;
 pub mod hogwild;
 pub mod huffman;
 pub mod nn;
-pub mod reservoir_sampling;
 pub mod runningstats;
 pub(crate) mod simd;

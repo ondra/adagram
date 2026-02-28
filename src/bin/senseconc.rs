@@ -9,7 +9,6 @@ use ndarray_rand::rand::prelude::SmallRng;
 
 use adagram::adagram::*;
 use adagram::common::*;
-use adagram::reservoir_sampling::SamplerExt;
 
 use rayon::prelude::*;
 
@@ -102,6 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("opening attribute {}", &args.posattr);
     }
     let posattr = corpus.open_attribute(&args.posattr)?;
+    let sampler = posattr.id2poss_sampler(args.sampleconc);
 
     if args.verbose {
         eprintln!("opening attribute {}", &args.word);
@@ -200,17 +200,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("ERROR: {} not found in corpus lexicon", head);
             continue;
         };
-        let poss = posattr.revidx().id2poss(corpid);
-        let poss_sampled = || -> Box<dyn Iterator<Item = u64> + Send> {
-            if let Some(nsamples) = args.sampleconc {
-                if nsamples < poss.len() {
-                    return Box::new(poss.sample(nsamples as usize, &mut rng));
-                }
-            }
-            Box::new(poss)
-        };
-
-        let pit = poss_sampled()
+        let poss = sampler.id2poss_with_rng(corpid, &mut rng);
+        let pit = poss
             .par_bridge()
             .map_init(
                 || {

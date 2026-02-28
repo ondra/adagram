@@ -11,9 +11,9 @@ use ndarray_rand::rand::prelude::SmallRng;
 use adagram::adagram::{VectorModel, parse_window};
 use adagram::common::*;
 use adagram::nn::nearest;
-use adagram::reservoir_sampling::SamplerExt;
 use adagram::runningstats::RunningStats;
 
+use corp::reservoir_sampling::SamplerExt;
 use corp::wsketch::WMap;
 use corp::wsketch::WSLex;
 
