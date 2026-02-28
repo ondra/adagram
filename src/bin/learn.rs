@@ -17,6 +17,10 @@ use adagram::huffman;
 
 use multiversion::multiversion;
 
+use corp::corp::Corpus;
+use corp::corp::CorpusLike;
+use corp::subcorp::SubCorpus;
+
 const VERSION: &str = git_version::git_version!(args = ["--tags", "--always", "--dirty"]);
 
 /// Train an adaptive skip-gram model
@@ -102,20 +106,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> { truemain() }
 #[multiversion(targets = "simd")]
 fn truemain() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    if args.threads == 0 {
+        return Err("threads must be >= 1".into());
+    }
     adagram::common::init_math();
 
     let tmpoutpath = args.outpath.to_string() + ".tmp";
     let mut outfile = std::fs::File::create(&tmpoutpath)?;
 
-    let (corpus, ranges): (Box<dyn corp::corp::CorpusLike>, Option<std::sync::Arc<corp::subcorp::Ranges>>) = match &args.subcorpus {
-        Some(subcpath) => {
-            let sc = corp::subcorp::SubCorpus::from_corpus(
-                corp::corp::Corpus::open(&args.corpname)?, subcpath)?;
-            let r = sc.ranges().clone();
-            (Box::new(sc), Some(r))
-        }
-        None => (Box::new(corp::corp::Corpus::open(&args.corpname)?), None),
+    let fullcorp = Box::new(Corpus::open(&args.corpname)?);
+    let subcorp = match &args.subcorpus {
+        Some(subcpath) => Some(SubCorpus::from_corpus(fullcorp.as_ref(), subcpath)?),
+        None => None,
     };
+    let corpus: &dyn CorpusLike = match subcorp.as_ref() {
+        Some(sc) => sc as &dyn CorpusLike,
+        None => fullcorp.as_ref() as &dyn CorpusLike,
+    };
+    let ranges = subcorp.as_ref().map(|sc| sc.ranges());
+
     let attr = corpus.open_attribute(&args.attrname)?;
     let frq = attr.get_freq("frq")?;
 
@@ -193,10 +202,10 @@ fn truemain() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let doc = corpus.open_struct(&args.docstructure)?;
-
-    let doc_cnt = match &ranges {
-        Some(r) => corp::subcorp::count_filtered_structs(doc.as_ref(), r),
-        None => doc.len(),
+    let search_size = corpus.search_size();
+    let start_positions = match ranges {
+        Some(r) => r.compute_start_positions(args.threads),
+        None => uniform_start_positions(search_size, args.threads),
     };
 
     let starttime = std::time::Instant::now();
@@ -233,8 +242,7 @@ fn truemain() -> Result<(), Box<dyn std::error::Error>> {
         let mut z = Array::<f64, Ix1>::zeros(prototypes);
         let mut doc_buf = Vec::new();
 
-        let partsize = doc_cnt / args.threads;
-        let startdoc = partsize * thread_id;
+        let start_pos = start_positions[thread_id];
         let starttime = std::time::Instant::now();
         let mut total_ll1 = 0.0f64;
         let mut total_ll2 = 0.0f64;
@@ -247,7 +255,6 @@ fn truemain() -> Result<(), Box<dyn std::error::Error>> {
         let mut global_words_read = 0usize;
         let mut lr = args.start_lr;
 
-        // Sync local progress to the global counter and return the global position count.
         let sync = |unsync: &mut usize| -> usize {
             let prev = words_read.fetch_add(*unsync, std::sync::atomic::Ordering::Relaxed);
             let global = prev + *unsync;
@@ -255,9 +262,10 @@ fn truemain() -> Result<(), Box<dyn std::error::Error>> {
             global
         };
 
-        for rawdoc in dociterm(doc.as_ref(), attr.as_ref(), &oid_to_nid, startdoc, ranges.as_deref()) {
-            preprocess_into(
-                &rawdoc,
+        for rawdoc in dociterm(doc.as_ref(), attr.as_ref(), &oid_to_nid, start_pos, ranges) {
+            let start_i = preprocess_into(
+                &rawdoc.vals,
+                rawdoc.start_idx,
                 freqs.as_slice().unwrap(),
                 total_frq,
                 args.subsample as f64,
@@ -265,11 +273,14 @@ fn truemain() -> Result<(), Box<dyn std::error::Error>> {
                 &mut doc_buf,
             );
             let doc = &doc_buf;
+            if start_i >= doc.len() {
+                continue;
+            }
             let mut in_mut = in_vecs.as_mut().view_mut();
             let mut out_mut = out_vecs.as_mut().view_mut();
             let mut counts_mut = counts.as_mut().view_mut();
 
-            for i in 0..doc.len() {
+            for i in start_i..doc.len() {
                 // Periodically sync with the global counter
                 if unsync_positions >= SYNC_INTERVAL {
                     global_words_read = sync(&mut unsync_positions);
@@ -414,25 +425,36 @@ fn truemain() -> Result<(), Box<dyn std::error::Error>> {
 
 fn preprocess_into(
     doc: &[u32],
+    start_at: usize,
     freqs: &[u64],
     total_frq: u64,
     subsampling_threshold: f64,
     rng: &mut SmallRng,
     out: &mut Vec<u32>,
-) {
+) -> usize {
     out.clear();
+    let mut new_start = 0usize;
     let u = distributions::Uniform::<f64>::new(0., 1.);
-    for &id in doc {
+    for (i, &id) in doc.iter().enumerate() {
         let f = freqs[id as usize];
         if u.sample(rng) < 1. - (subsampling_threshold / (f as f64 / total_frq as f64)).sqrt() {
             continue;
         }
+        if i < start_at {
+            new_start += 1;
+        }
         out.push(id);
     }
+    new_start
 }
 
 /// Iterates over documents, wrapping around to the beginning, mapping original IDs to new IDs.
 /// When ranges is set, skips documents not fully contained within the subcorpus ranges.
+struct RawDoc {
+    vals: Vec<u32>,
+    start_idx: usize,
+}
+
 struct DocIter<'a> {
     docpos: usize,
     doc: &'a dyn corp::structure::Struct,
@@ -440,21 +462,32 @@ struct DocIter<'a> {
     oid_to_nid: &'a [u32],
     ranges: Option<&'a corp::subcorp::Ranges>,
     docs_seen: usize,
+    start_pos: u64,
+    use_start_pos: bool,
 }
 
 fn dociterm<'a>(
     doc: &'a dyn corp::structure::Struct,
     attr: &'a dyn corp::corp::Attr,
     oid_to_nid: &'a [u32],
-    from: usize,
+    from_pos: u64,
     ranges: Option<&'a corp::subcorp::Ranges>,
 ) -> DocIter<'a> {
-    DocIter { docpos: from, doc, attr, oid_to_nid, ranges, docs_seen: 0 }
+    DocIter {
+        docpos: doc_index_at_pos(doc, from_pos),
+        doc,
+        attr,
+        oid_to_nid,
+        ranges,
+        docs_seen: 0,
+        start_pos: from_pos,
+        use_start_pos: true,
+    }
 }
 
 impl Iterator for DocIter<'_> {
-    type Item = Vec<u32>;
-    fn next(&mut self) -> Option<Vec<u32>> {
+    type Item = RawDoc;
+    fn next(&mut self) -> Option<RawDoc> {
         let total = self.doc.len();
         loop {
             if self.docpos >= total {
@@ -476,14 +509,46 @@ impl Iterator for DocIter<'_> {
             }
             self.docs_seen = 0;
 
+            let train_from = if self.use_start_pos && beg <= self.start_pos && self.start_pos < end {
+                self.start_pos
+            } else {
+                beg
+            };
+            self.use_start_pos = false;
+            let prefix_len = (train_from - beg) as usize;
+
+            let mut start_idx = 0usize;
             let vals = self.attr.iter_ids(beg)
                 .take((end - beg) as usize)
-                .filter_map(|oid| match self.oid_to_nid[oid as usize] {
+                .enumerate()
+                .filter_map(|(i, oid)| match self.oid_to_nid[oid as usize] {
                     u32::MAX => None,
-                    nid => Some(nid),
+                    nid => {
+                        if i < prefix_len {
+                            start_idx += 1;
+                        }
+                        Some(nid)
+                    }
                 })
                 .collect();
-            return Some(vals);
+            return Some(RawDoc { vals, start_idx });
         }
     }
+}
+
+fn uniform_start_positions(total: u64, threads: usize) -> Vec<u64> {
+    (0..threads)
+        .map(|i| ((i as u128 * total as u128) / threads as u128) as u64)
+        .collect()
+}
+
+fn doc_index_at_pos(doc: &dyn corp::structure::Struct, pos: u64) -> usize {
+    if doc.is_empty() {
+        return 0;
+    }
+    if let Some(idx) = doc.num_at_pos(pos) {
+        return idx as usize;
+    }
+    let (idx, _) = doc.find_end(pos.saturating_add(1));
+    if idx == u64::MAX { 0 } else { idx as usize }
 }

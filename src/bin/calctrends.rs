@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let diastruct = corpus.open_struct(diastructname)?;
 
     let trendbase = if args.trendbase == "" {
-        corpus.path + "/" + &args.diaattr + "." + &args.posattr
+        corpus.path.clone() + "/" + &args.diaattr + "." + &args.posattr
     } else {
         args.trendbase
     };
