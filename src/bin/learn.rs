@@ -240,6 +240,7 @@ fn truemain() -> Result<(), Box<dyn std::error::Error>> {
         assert_simd_aligned(dim, in_grad.as_ptr(), "in_grad");
         assert_simd_aligned(dim, out_grad.as_ptr(), "out_grad");
         let mut z = Array::<f64, Ix1>::zeros(prototypes);
+        let mut raw_doc_buf = Vec::new();
         let mut doc_buf = Vec::new();
 
         let start_pos = start_positions[thread_id];
@@ -262,99 +263,132 @@ fn truemain() -> Result<(), Box<dyn std::error::Error>> {
             global
         };
 
-        for rawdoc in dociterm(doc.as_ref(), attr.as_ref(), &oid_to_nid, start_pos, ranges) {
-            let start_i = preprocess_into(
-                &rawdoc.vals,
-                rawdoc.start_idx,
-                freqs.as_slice().unwrap(),
-                total_frq,
-                args.subsample as f64,
-                &mut loc_rng,
-                &mut doc_buf,
-            );
-            let doc = &doc_buf;
-            if start_i >= doc.len() {
-                continue;
-            }
-            let mut in_mut = in_vecs.as_mut().view_mut();
-            let mut out_mut = out_vecs.as_mut().view_mut();
-            let mut counts_mut = counts.as_mut().view_mut();
+        let mut from_pos = start_pos;
+        loop {
+            let mut saw_doc = false;
+            let mut use_start_pos = true;
+            let docs: Box<dyn Iterator<Item = (u64, u64)> + '_> = match ranges {
+                Some(r) => Box::new(corp::subcorp::filtered_struct_iter_from_pos(
+                    doc.as_ref(),
+                    r,
+                    from_pos,
+                )),
+                None => Box::new(corp::subcorp::struct_iter_from_pos(doc.as_ref(), from_pos)),
+            };
 
-            for i in start_i..doc.len() {
-                // Periodically sync with the global counter
-                if unsync_positions >= SYNC_INTERVAL {
-                    global_words_read = sync(&mut unsync_positions);
-                    lr = f64::max(
-                        args.start_lr * (1. - global_words_read as f64 / (total_words as f64 + 1.)),
-                        args.start_lr * 1e-4,
-                    );
+            for (beg, end) in docs {
+                saw_doc = true;
+                let train_from = if use_start_pos && beg <= from_pos && from_pos < end {
+                    from_pos
+                } else {
+                    beg
+                };
+                use_start_pos = false;
+                let raw_start_i = map_doc_into(
+                    attr.as_ref(),
+                    &oid_to_nid,
+                    beg,
+                    end,
+                    train_from,
+                    &mut raw_doc_buf,
+                );
+                let start_i = preprocess_into(
+                    &raw_doc_buf,
+                    raw_start_i,
+                    freqs.as_slice().unwrap(),
+                    total_frq,
+                    args.subsample as f64,
+                    &mut loc_rng,
+                    &mut doc_buf,
+                );
+                let doc = &doc_buf;
+                if start_i >= doc.len() {
+                    continue;
+                }
+                let mut in_mut = in_vecs.as_mut().view_mut();
+                let mut out_mut = out_vecs.as_mut().view_mut();
+                let mut counts_mut = counts.as_mut().view_mut();
 
-                    if compute_ll {
-                        let dur = reporttime.elapsed().as_secs_f64();
-                        if dur > 1.0 {
-                            let rws = global_words_read - words_read_last;
-                            words_read_last = global_words_read;
-                            let wps = rws as f64 / dur;
-                            let remaining_secs = if wps > 0.0 {
-                                (total_words - global_words_read) as f64 / wps
-                            } else {
-                                0.0
-                            };
-                            reporttime = std::time::Instant::now();
-                            let elapsed = reporttime.duration_since(starttime).as_secs();
-                            eprint!(
-                                "\r[{}] visited {} positions out of {} ({:.2} %), {:.0} wps, {:02}h:{:02}m remaining, lr {:.5} ll {:.7}",
-                                elapsed,
-                                global_words_read,
-                                total_words,
-                                global_words_read as f64 / total_words as f64 * 100.0,
-                                wps,
-                                remaining_secs as u64 / 3600,
-                                (remaining_secs as u64 % 3600) / 60,
-                                lr,
-                                total_ll1,
-                            );
+                for i in start_i..doc.len() {
+                    // Periodically sync with the global counter
+                    if unsync_positions >= SYNC_INTERVAL {
+                        global_words_read = sync(&mut unsync_positions);
+                        lr = f64::max(
+                            args.start_lr * (1. - global_words_read as f64 / (total_words as f64 + 1.)),
+                            args.start_lr * 1e-4,
+                        );
+
+                        if compute_ll {
+                            let dur = reporttime.elapsed().as_secs_f64();
+                            if dur > 1.0 {
+                                let rws = global_words_read - words_read_last;
+                                words_read_last = global_words_read;
+                                let wps = rws as f64 / dur;
+                                let remaining_secs = if wps > 0.0 {
+                                    (total_words - global_words_read) as f64 / wps
+                                } else {
+                                    0.0
+                                };
+                                reporttime = std::time::Instant::now();
+                                let elapsed = reporttime.duration_since(starttime).as_secs();
+                                eprint!(
+                                    "\r[{}] visited {} positions out of {} ({:.2} %), {:.0} wps, {:02}h:{:02}m remaining, lr {:.5} ll {:.7}",
+                                    elapsed,
+                                    global_words_read,
+                                    total_words,
+                                    global_words_read as f64 / total_words as f64 * 100.0,
+                                    wps,
+                                    remaining_secs as u64 / 3600,
+                                    (remaining_secs as u64 % 3600) / 60,
+                                    lr,
+                                    total_ll1,
+                                );
+                            }
+                        }
+
+                        if global_words_read >= total_words {
+                            sync(&mut unsync_positions);
+                            return;
                         }
                     }
 
-                    if global_words_read >= total_words {
-                        return;
+                    let x = doc[i];
+                    let j_lo = (i as isize - window).max(0) as usize;
+                    let j_hi = (i as isize + window).min(doc.len() as isize) as usize;
+
+                    var_init_z(&counts_mut, alpha, x, &mut z);
+
+                    for j in j_lo..j_hi {
+                        if j == i { continue; }
+                        var_update_z(&in_mut, &out_mut, &code, &path, x, doc[j], &mut z);
                     }
-                }
 
-                let x = doc[i];
-                let j_lo = (i as isize - window).max(0) as usize;
-                let j_hi = (i as isize + window).min(doc.len() as isize) as usize;
+                    exp_normalize(&mut z);
 
-                var_init_z(&counts_mut, alpha, x, &mut z);
-
-                for j in j_lo..j_hi {
-                    if j == i { continue; }
-                    var_update_z(&in_mut, &out_mut, &code, &path, x, doc[j], &mut z);
-                }
-
-                exp_normalize(&mut z);
-
-                for j in j_lo..j_hi {
-                    if j == i { continue; }
-                    let ll = in_place_update(
-                        &mut in_mut, &mut out_mut, &counts_mut,
-                        x, doc[j], &z, &code, &path, lr,
-                        &mut in_grad, &mut out_grad,
-                        args.sense_threshold, compute_ll,
-                    );
-                    if compute_ll {
-                        total_ll2 += 1.;
-                        total_ll1 += (ll - total_ll1) / total_ll2;
+                    for j in j_lo..j_hi {
+                        if j == i { continue; }
+                        let ll = in_place_update(
+                            &mut in_mut, &mut out_mut, &counts_mut,
+                            x, doc[j], &z, &code, &path, lr,
+                            &mut in_grad, &mut out_grad,
+                            args.sense_threshold, compute_ll,
+                        );
+                        if compute_ll {
+                            total_ll2 += 1.;
+                            total_ll1 += (ll - total_ll1) / total_ll2;
+                        }
                     }
-                }
 
-                var_update_counts(&freqs, &mut counts_mut, x, &z, lr);
-                unsync_positions += 1;
+                    var_update_counts(&freqs, &mut counts_mut, x, &z, lr);
+                    unsync_positions += 1;
+                }
             }
+            if !saw_doc {
+                sync(&mut unsync_positions);
+                return;
+            }
+            from_pos = 0;
         }
-        // Flush any remaining unsync'd positions
-        sync(&mut unsync_positions);
     };
 
     eprintln!("starting workers");
@@ -448,107 +482,33 @@ fn preprocess_into(
     new_start
 }
 
-/// Iterates over documents, wrapping around to the beginning, mapping original IDs to new IDs.
-/// When ranges is set, skips documents not fully contained within the subcorpus ranges.
-struct RawDoc {
-    vals: Vec<u32>,
-    start_idx: usize,
-}
-
-struct DocIter<'a> {
-    docpos: usize,
-    doc: &'a dyn corp::structure::Struct,
-    attr: &'a (dyn corp::corp::Attr + 'a),
-    oid_to_nid: &'a [u32],
-    ranges: Option<&'a corp::subcorp::Ranges>,
-    docs_seen: usize,
-    start_pos: u64,
-    use_start_pos: bool,
-}
-
-fn dociterm<'a>(
-    doc: &'a dyn corp::structure::Struct,
-    attr: &'a dyn corp::corp::Attr,
-    oid_to_nid: &'a [u32],
-    from_pos: u64,
-    ranges: Option<&'a corp::subcorp::Ranges>,
-) -> DocIter<'a> {
-    DocIter {
-        docpos: doc_index_at_pos(doc, from_pos),
-        doc,
-        attr,
-        oid_to_nid,
-        ranges,
-        docs_seen: 0,
-        start_pos: from_pos,
-        use_start_pos: true,
-    }
-}
-
-impl Iterator for DocIter<'_> {
-    type Item = RawDoc;
-    fn next(&mut self) -> Option<RawDoc> {
-        let total = self.doc.len();
-        loop {
-            if self.docpos >= total {
-                self.docpos = 0;
-            }
-            if self.docs_seen >= total {
-                // Full wrap-around with no match — avoid infinite loop
-                return None;
-            }
-            let beg = self.doc.beg_at(self.docpos as u64);
-            let end = self.doc.end_at(self.docpos as u64);
-            self.docpos += 1;
-            self.docs_seen += 1;
-
-            if let Some(r) = self.ranges {
-                if !r.contains_range(beg, end) {
-                    continue;
+fn map_doc_into(
+    attr: &dyn corp::corp::Attr,
+    oid_to_nid: &[u32],
+    beg: u64,
+    end: u64,
+    train_from: u64,
+    out: &mut Vec<u32>,
+) -> usize {
+    out.clear();
+    let prefix_len = train_from.saturating_sub(beg) as usize;
+    let mut start_idx = 0usize;
+    for (i, oid) in attr.iter_ids(beg).take((end - beg) as usize).enumerate() {
+        match oid_to_nid[oid as usize] {
+            u32::MAX => (),
+            nid => {
+                if i < prefix_len {
+                    start_idx += 1;
                 }
+                out.push(nid);
             }
-            self.docs_seen = 0;
-
-            let train_from = if self.use_start_pos && beg <= self.start_pos && self.start_pos < end {
-                self.start_pos
-            } else {
-                beg
-            };
-            self.use_start_pos = false;
-            let prefix_len = (train_from - beg) as usize;
-
-            let mut start_idx = 0usize;
-            let vals = self.attr.iter_ids(beg)
-                .take((end - beg) as usize)
-                .enumerate()
-                .filter_map(|(i, oid)| match self.oid_to_nid[oid as usize] {
-                    u32::MAX => None,
-                    nid => {
-                        if i < prefix_len {
-                            start_idx += 1;
-                        }
-                        Some(nid)
-                    }
-                })
-                .collect();
-            return Some(RawDoc { vals, start_idx });
         }
     }
+    start_idx
 }
 
 fn uniform_start_positions(total: u64, threads: usize) -> Vec<u64> {
     (0..threads)
         .map(|i| ((i as u128 * total as u128) / threads as u128) as u64)
         .collect()
-}
-
-fn doc_index_at_pos(doc: &dyn corp::structure::Struct, pos: u64) -> usize {
-    if doc.is_empty() {
-        return 0;
-    }
-    if let Some(idx) = doc.num_at_pos(pos) {
-        return idx as usize;
-    }
-    let (idx, _) = doc.find_end(pos.saturating_add(1));
-    if idx == u64::MAX { 0 } else { idx as usize }
 }

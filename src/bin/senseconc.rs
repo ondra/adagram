@@ -82,10 +82,14 @@ struct Args {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    let corpus: Box<dyn corp::corp::CorpusLike> = match &args.subcorpus {
-        Some(subcpath) => Box::new(corp::subcorp::SubCorpus::from_corpus(
-            corp::corp::Corpus::open(&args.corpname)?, subcpath)?),
-        None => Box::new(corp::corp::Corpus::open(&args.corpname)?),
+    let fullcorp = Box::new(corp::corp::Corpus::open(&args.corpname)?);
+    let subcorp = match &args.subcorpus {
+        Some(subcpath) => Some(corp::subcorp::SubCorpus::from_corpus(fullcorp.as_ref(), subcpath)?),
+        None => None,
+    };
+    let corpus: &dyn corp::corp::CorpusLike = match subcorp.as_ref() {
+        Some(sc) => sc as &dyn corp::corp::CorpusLike,
+        None => fullcorp.as_ref() as &dyn corp::corp::CorpusLike,
     };
 
     let tpb = rayon::ThreadPoolBuilder::new().thread_name(|tid| format!("rayon_worker{}", tid));
