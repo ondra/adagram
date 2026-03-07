@@ -150,8 +150,8 @@ impl VectorModel {
         rf.read_line(&mut line)?;
         let mut buf = [0u8; 4];
 
-        // see the description below, but should not be necessary unless using legacy data
-        const ALLOW_MALFORMED_MODELS: bool = false;
+        // Should not be necessary unless using legacy data.
+        const ALLOW_MALFORMED_MODELS: bool = cfg!(feature = "allow_malformed_models");
 
         for i in 0..lexsize {
             let word = line.trim().to_string();
