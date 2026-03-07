@@ -4,7 +4,7 @@ mod global_alloc;
 use ndarray::Array;
 use ndarray::prelude::*;
 
-use adagram::adagram::VectorModel;
+use adagram::adagram::{VectorModel, parse_window};
 use adagram::common::*;
 
 use clap::Parser;
@@ -17,6 +17,11 @@ const VERSION: &str = git_version::git_version!(args = ["--tags", "--always", "-
 struct Args {
     /// adagram model path
     model: String,
+
+    /// window size, token count on both sides of headword used for desambiguation
+    /// (if omitted, inferred from model path; fallback 4; 0 means full context)
+    #[clap(long)]
+    window: Option<usize>,
 
     /// ignore the headword during desambiguation
     #[clap(long, default_value_t = true)]
@@ -65,6 +70,10 @@ struct Args {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    let window = match args.window {
+        Some(0) => None,
+        _ => Some(parse_window(args.window, &args.model).unwrap_or(4)),
+    };
 
     if args.verbose {
         eprintln!("loading {}", args.model);
@@ -209,25 +218,104 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut nvalid = 0;
         let mut ninvalid = 0;
+        let mut context_suffix = None;
 
         match cols.next() {
             Some(context) => {
-                let parts = context.split_whitespace();
-                for ctxword in parts {
-                    if args.skip_headword && ctxword == head {
-                        continue;
-                    }
-                    let y = match str2id.get(ctxword) {
-                        Some(n) => {
-                            nvalid += 1;
-                            *n
-                        }
-                        None => {
-                            ninvalid += 1;
+                let toks = context.split_whitespace().collect::<Vec<_>>();
+
+                if let Some(w) = window {
+                    let mid = toks.len() / 2;
+                    let mut anchor = None;
+                    let mut best_dist = usize::MAX;
+                    for (i, tok) in toks.iter().enumerate() {
+                        if *tok != head {
                             continue;
                         }
+                        let dist = i.abs_diff(mid);
+                        if dist < best_dist {
+                            best_dist = dist;
+                            anchor = Some(i);
+                        }
+                    }
+                    context_suffix = Some(if anchor.is_some() { "hw" } else { "mw" });
+
+                    let mut apply_tok = |ctxword: &str| {
+                        if args.skip_headword && ctxword == head {
+                            return false;
+                        }
+                        if let Some(y) = str2id.get(ctxword) {
+                            nvalid += 1;
+                            var_update_z(
+                                &vm.in_vecs,
+                                &vm.out_vecs,
+                                &vm.code,
+                                &vm.path,
+                                x,
+                                *y,
+                                &mut z,
+                            );
+                            true
+                        } else {
+                            ninvalid += 1;
+                            false
+                        }
                     };
-                    var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path, x, y, &mut z);
+
+                    let mut lused = 0usize;
+                    let mut rused = 0usize;
+
+                    if let Some(a) = anchor {
+                        let mut i = a;
+                        while i > 0 && lused < w {
+                            i -= 1;
+                            if apply_tok(toks[i]) {
+                                lused += 1;
+                            }
+                        }
+
+                        let mut i = a + 1;
+                        while i < toks.len() && rused < w {
+                            if apply_tok(toks[i]) {
+                                rused += 1;
+                            }
+                            i += 1;
+                        }
+                    } else {
+                        let mut i = mid;
+                        while i > 0 && lused < w {
+                            i -= 1;
+                            if apply_tok(toks[i]) {
+                                lused += 1;
+                            }
+                        }
+
+                        let mut i = mid;
+                        while i < toks.len() && rused < w {
+                            if apply_tok(toks[i]) {
+                                rused += 1;
+                            }
+                            i += 1;
+                        }
+                    }
+                } else {
+                    context_suffix = Some("full");
+                    for ctxword in toks {
+                        if args.skip_headword && ctxword == head {
+                            continue;
+                        }
+                        let y = match str2id.get(ctxword) {
+                            Some(n) => {
+                                nvalid += 1;
+                                *n
+                            }
+                            None => {
+                                ninvalid += 1;
+                                continue;
+                            }
+                        };
+                        var_update_z(&vm.in_vecs, &vm.out_vecs, &vm.code, &vm.path, x, y, &mut z);
+                    }
                 }
                 if args.mirror_input {
                     outvals.push(context.to_string())
@@ -240,23 +328,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
+        let mut push_status = |base: &str| {
+            if args.print_status {
+                outvals.push(match context_suffix {
+                    Some(sfx) => format!("{}_{}", base, sfx),
+                    None => base.to_string(),
+                });
+            }
+        };
+
         if nvalid == 0 {
             if ninvalid == 0 {
                 ctx_empty += 1;
-                if args.print_status {
-                    outvals.push("noctx".to_string());
-                }
+                push_status("noctx");
             } else {
                 ctx_all_unknown += 1;
-                if args.print_status {
-                    outvals.push("unctx".to_string());
-                }
+                push_status("unctx");
             }
         } else {
             allok += 1;
-            if args.print_status {
-                outvals.push("allok".to_string());
-            }
+            push_status("allok");
         }
 
         exp_normalize(&mut z);
