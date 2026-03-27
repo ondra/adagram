@@ -15,8 +15,8 @@ debug = true
 [dependencies]
 tikv-jemallocator = { version = "0.6", optional = true }
 mimalloc = { version = "0.1.48", optional = true }
-corp = { path = "../corp" }
-slope = { path = "../slope" }
+corp = { git = "https://github.com/ondra/corp" }
+slope = { git = "https://github.com/ondra/slope" }
 spfunc = "0.1.0"
 ndarray = "0.16.1"
 ndarray-rand = "0.15.0"
