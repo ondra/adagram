@@ -156,13 +156,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let nsenses = vm.in_vecs.len_of(Axis(1));
 
-        for i in 0..nsenses {
-            let r = nearest(&vm, head_mid as usize, i, args.sense_neighbors, 5);
-            print!("# sense {} ({}):", i, vm.counts[[head_mid as usize, i]]);
-            for (mid, senseno, sim) in r {
-                print!("\t{}##{}/{:.3}", id2str[mid as usize], senseno, sim);
+        if args.sense_neighbors > 0 {
+            for i in 0..nsenses {
+                let r = nearest(&vm, head_mid as usize, i, args.sense_neighbors, 5);
+                print!("# sense {} ({}):", i, vm.counts[[head_mid as usize, i]]);
+                for (mid, senseno, sim) in r {
+                    print!("\t{}##{}/{:.3}", id2str[mid as usize], senseno, sim);
+                }
+                println!();
             }
-            println!();
         }
 
         for relx in headx.iter() {
